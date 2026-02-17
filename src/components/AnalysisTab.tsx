@@ -9,14 +9,20 @@ interface AnalysisTabProps {
   baseParams: SimulationParams;
 }
 
-function compare(label: string, a: SimulationResults, b: SimulationResults, aLabel: string, bLabel: string) {
-  return {
-    label,
-    [aLabel]: Number(a.meanYield.toFixed(3)),
-    [bLabel]: Number(b.meanYield.toFixed(3)),
-    aLow: Number((a.lowYieldProbability * 100).toFixed(1)),
-    bLow: Number((b.lowYieldProbability * 100).toFixed(1)),
-  };
+// ... keep existing code (compare function - lines 12-20)
+
+const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const TYPHOON_LEVELS = [0, 5, 10, 15, 20, 25, 30, 35, 40];
+
+function getHeatColor(value: number): string {
+  // value is low yield probability 0-1
+  const pct = value * 100;
+  if (pct < 5) return 'hsl(var(--primary))';
+  if (pct < 10) return 'hsl(142 50% 45%)';
+  if (pct < 15) return 'hsl(80 50% 50%)';
+  if (pct < 25) return 'hsl(45 80% 50%)';
+  if (pct < 35) return 'hsl(25 80% 50%)';
+  return 'hsl(var(--destructive))';
 }
 
 export default function AnalysisTab({ baseParams }: AnalysisTabProps) {
@@ -35,6 +41,28 @@ export default function AnalysisTab({ baseParams }: AnalysisTabProps) {
     const highTyphoon = runSimulation({ ...p, typhoonProbability: 35 });
 
     return { irrigated, rainfed, elNino, neutral, laNina, lowTyphoon, highTyphoon };
+  }, [baseParams]);
+
+  const heatmapData = useMemo(() => {
+    const data: { month: number; monthLabel: string; typhoon: number; meanYield: number; lowRisk: number }[] = [];
+    for (const month of Array.from({ length: 12 }, (_, i) => i + 1)) {
+      for (const typhoon of TYPHOON_LEVELS) {
+        const res = runSimulation({
+          ...baseParams,
+          plantingMonth: month,
+          typhoonProbability: typhoon,
+          numCycles: 500,
+        });
+        data.push({
+          month,
+          monthLabel: MONTH_NAMES_SHORT[month - 1],
+          typhoon,
+          meanYield: res.meanYield,
+          lowRisk: res.lowYieldProbability,
+        });
+      }
+    }
+    return data;
   }, [baseParams]);
 
   const irrigationData = [
@@ -74,6 +102,62 @@ export default function AnalysisTab({ baseParams }: AnalysisTabProps) {
 
   return (
     <div className="space-y-6">
+      {/* Yield Risk Heatmap */}
+      <Card className="border-border">
+        <CardHeader>
+          <CardTitle className="text-base">Yield Risk Heatmap — Planting Month × Typhoon Probability</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground mb-4">
+            Each cell shows the probability of low yield (&lt;2.0 t/ha) from 500 Monte Carlo cycles. Darker red = higher risk.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr>
+                  <th className="text-left py-1 px-2 text-muted-foreground font-medium">Typhoon %</th>
+                  {MONTH_NAMES_SHORT.map((m) => (
+                    <th key={m} className="text-center py-1 px-1 text-muted-foreground font-medium">{m}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {TYPHOON_LEVELS.map((tp) => (
+                  <tr key={tp}>
+                    <td className="py-1 px-2 font-medium text-muted-foreground">{tp}%</td>
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map((month) => {
+                      const cell = heatmapData.find((d) => d.month === month && d.typhoon === tp);
+                      const risk = cell?.lowRisk ?? 0;
+                      return (
+                        <td key={month} className="py-1 px-1">
+                          <div
+                            className="rounded text-center py-1.5 font-bold text-[10px]"
+                            style={{
+                              backgroundColor: getHeatColor(risk),
+                              color: risk > 0.25 ? 'white' : 'hsl(var(--primary-foreground))',
+                            }}
+                            title={`Mean: ${cell?.meanYield.toFixed(2)} t/ha | Risk: ${(risk * 100).toFixed(1)}%`}
+                          >
+                            {(risk * 100).toFixed(0)}%
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center gap-3 mt-4 text-[10px] text-muted-foreground">
+            <span>Low Risk</span>
+            {[0, 0.07, 0.12, 0.20, 0.30, 0.40].map((v, i) => (
+              <div key={i} className="w-6 h-4 rounded" style={{ backgroundColor: getHeatColor(v) }} />
+            ))}
+            <span>High Risk</span>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Irrigation Comparison */}
         <Card className="border-border">
@@ -166,7 +250,8 @@ export default function AnalysisTab({ baseParams }: AnalysisTabProps) {
           <p>• <strong>Irrigation</strong> is the most controllable factor, consistently adding ~0.3 t/ha and reducing crop failure probability.</p>
           <p>• <strong>ENSO state</strong> has a significant effect: El Niño reduces yields by 0.4 t/ha on average, while La Niña increases them by 0.3 t/ha.</p>
           <p>• <strong>Typhoon frequency</strong> is the largest risk factor. At 35% probability, expected yield drops significantly and crop failure risk rises sharply.</p>
-          <p>• The Monte Carlo approach (1,000 cycles per scenario) provides robust statistical estimates for risk-based decision making.</p>
+          <p>• The <strong>heatmap</strong> reveals that wet season months (Jun–Oct) combined with high typhoon probability create the highest risk zones.</p>
+          <p>• The Monte Carlo approach (500–1,000 cycles per scenario) provides robust statistical estimates for risk-based decision making.</p>
         </CardContent>
       </Card>
     </div>
