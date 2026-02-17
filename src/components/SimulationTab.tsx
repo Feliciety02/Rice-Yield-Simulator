@@ -187,6 +187,21 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
             />
           </div>
 
+          {running && cycles.length > 0 && (
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Progress</span>
+                <span>{Math.round((cycles.length / params.numCycles) * 100)}%</span>
+              </div>
+              <div className="h-2 w-full rounded-full bg-secondary overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all duration-150 rounded-full"
+                  style={{ width: `${(cycles.length / params.numCycles) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2 pt-2">
             <Button onClick={start} disabled={running} className="flex-1 gap-2">
               <Play className="w-4 h-4" /> Animate
