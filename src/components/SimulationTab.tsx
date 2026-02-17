@@ -36,17 +36,20 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
   });
 
   const [running, setRunning] = useState(false);
+  const [speed, setSpeed] = useState(200); // ms per cycle
   const [cycles, setCycles] = useState<CycleResult[]>([]);
   const [currentCycle, setCurrentCycle] = useState<CycleResult | null>(null);
   const [growthProgress, setGrowthProgress] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
 
   const avgYield = cycles.length > 0
     ? cycles.reduce((s, c) => s + c.finalYield, 0) / cycles.length
     : 0;
 
   const stop = useCallback(() => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (intervalRef.current) clearTimeout(intervalRef.current as unknown as number);
     setRunning(false);
   }, []);
 
@@ -63,9 +66,8 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
     let i = 0;
     const allCycles: CycleResult[] = [];
 
-    intervalRef.current = setInterval(() => {
+    const tick = () => {
       if (i >= params.numCycles) {
-        clearInterval(intervalRef.current!);
         setRunning(false);
         onComplete(computeResults(allCycles));
         return;
@@ -76,7 +78,9 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
       setCurrentCycle(cycle);
       setGrowthProgress((i % 10) / 10);
       i++;
-    }, Math.max(20, 1000 / params.numCycles));
+      intervalRef.current = setTimeout(tick, speedRef.current) as unknown as ReturnType<typeof setInterval>;
+    };
+    tick();
   }, [params, reset, onComplete]);
 
   const runInstant = useCallback(() => {
@@ -169,6 +173,17 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
               max={500}
               step={1}
               disabled={running}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Speed: {speed <= 20 ? 'Max' : speed >= 400 ? 'Slow' : speed <= 100 ? 'Fast' : 'Normal'} ({speed}ms/cycle)</Label>
+            <Slider
+              value={[speed]}
+              onValueChange={([v]) => setSpeed(v)}
+              min={10}
+              max={500}
+              step={10}
             />
           </div>
 
