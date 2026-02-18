@@ -1,101 +1,50 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Pause, RotateCcw, Zap } from 'lucide-react';
+import { Play, Pause, RotateCcw, Zap, FastForward } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import WeatherScene from './WeatherScene';
-import {
-  SimulationParams,
-  CycleResult,
-  simulateCycle,
-  IrrigationType,
-  ENSOState,
-  SimulationResults,
-  computeResults,
-} from '@/lib/simulation';
+import { useSimulation } from '@/context/SimulationContext';
+import { IrrigationType, ENSOState } from '@/lib/simulation';
 
 const MONTH_NAMES = [
   'January','February','March','April','May','June',
   'July','August','September','October','November','December',
 ];
 
-interface SimulationTabProps {
-  onComplete: (results: SimulationResults) => void;
-}
+const SPEED_LABELS: Record<number, string> = {
+  0.5: '0.5×',
+  1: '1×',
+  2: '2×',
+  5: '5×',
+  10: '10×',
+  20: '20×',
+};
 
-export default function SimulationTab({ onComplete }: SimulationTabProps) {
-  const [params, setParams] = useState<SimulationParams>({
-    plantingMonth: 6,
-    irrigationType: 'Irrigated',
-    ensoState: 'Neutral',
-    typhoonProbability: 15,
-    numCycles: 100,
-  });
+export default function SimulationTab() {
+  const { snap, start, pause, resume, reset, setSpeed, updateParams } = useSimulation();
+  const { status, params, pendingParams, speedMultiplier, currentCycleIndex,
+    currentDay, dayProgress, runProgress, currentWeather, currentYield,
+    runningMean, recentYields } = snap;
 
-  const [running, setRunning] = useState(false);
-  const [speed, setSpeed] = useState(200); // ms per cycle
-  const [cycles, setCycles] = useState<CycleResult[]>([]);
-  const [currentCycle, setCurrentCycle] = useState<CycleResult | null>(null);
-  const [growthProgress, setGrowthProgress] = useState(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const speedRef = useRef(speed);
-  speedRef.current = speed;
+  const isRunning = status === 'running';
+  const isPaused  = status === 'paused';
+  const isActive  = isRunning || isPaused;
+  const isIdle    = status === 'idle';
+  const isFinished = status === 'finished';
 
-  const avgYield = cycles.length > 0
-    ? cycles.reduce((s, c) => s + c.finalYield, 0) / cycles.length
-    : 0;
+  // Resolved display params (pending overrides shown for non-live fields)
+  const displayParams = { ...params, ...pendingParams };
 
-  const stop = useCallback(() => {
-    if (intervalRef.current) clearTimeout(intervalRef.current as unknown as number);
-    setRunning(false);
-  }, []);
-
-  const reset = useCallback(() => {
-    stop();
-    setCycles([]);
-    setCurrentCycle(null);
-    setGrowthProgress(0);
-  }, [stop]);
-
-  const start = useCallback(() => {
+  const handleInstant = () => {
+    // Use high speed (effectively instant by running the engine at max speed)
+    // Actually, for instant we run a batch. Reuse engine's normal flow at 1000x.
     reset();
-    setRunning(true);
-    let i = 0;
-    const allCycles: CycleResult[] = [];
-
-    const tick = () => {
-      if (i >= params.numCycles) {
-        setRunning(false);
-        onComplete(computeResults(allCycles));
-        return;
-      }
-      const cycle = simulateCycle(i + 1, params);
-      allCycles.push(cycle);
-      setCycles([...allCycles]);
-      setCurrentCycle(cycle);
-      setGrowthProgress((i % 10) / 10);
-      i++;
-      intervalRef.current = setTimeout(tick, speedRef.current) as unknown as ReturnType<typeof setInterval>;
-    };
-    tick();
-  }, [params, reset, onComplete]);
-
-  const runInstant = useCallback(() => {
-    reset();
-    const allCycles: CycleResult[] = [];
-    for (let i = 0; i < params.numCycles; i++) {
-      allCycles.push(simulateCycle(i + 1, params));
-    }
-    setCycles(allCycles);
-    setCurrentCycle(allCycles[allCycles.length - 1]);
-    setGrowthProgress(1);
-    onComplete(computeResults(allCycles));
-  }, [params, reset, onComplete]);
-
-  useEffect(() => () => { if (intervalRef.current) clearInterval(intervalRef.current); }, []);
+    setSpeed(1000);
+    start();
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -103,14 +52,24 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
       <Card className="lg:col-span-1 border-border">
         <CardHeader>
           <CardTitle className="text-lg">Simulation Controls</CardTitle>
+          {isActive && (
+            <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-primary animate-pulse inline-block" />
+              {isRunning ? 'Running — switch tabs freely' : 'Paused'}
+            </div>
+          )}
         </CardHeader>
         <CardContent className="space-y-5">
+          {/* Planting Month */}
           <div className="space-y-2">
-            <Label>Planting Month</Label>
+            <Label>Planting Month
+              {isActive && pendingParams.plantingMonth !== undefined && (
+                <span className="ml-2 text-[10px] text-warning">(queued)</span>
+              )}
+            </Label>
             <Select
-              value={String(params.plantingMonth)}
-              onValueChange={(v) => setParams((p) => ({ ...p, plantingMonth: Number(v) }))}
-              disabled={running}
+              value={String(displayParams.plantingMonth)}
+              onValueChange={(v) => updateParams({ plantingMonth: Number(v) })}
             >
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -121,12 +80,16 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
             </Select>
           </div>
 
+          {/* Irrigation */}
           <div className="space-y-2">
-            <Label>Irrigation Type</Label>
+            <Label>Irrigation Type
+              {isActive && pendingParams.irrigationType !== undefined && (
+                <span className="ml-2 text-[10px] text-warning">(queued)</span>
+              )}
+            </Label>
             <Select
-              value={params.irrigationType}
-              onValueChange={(v) => setParams((p) => ({ ...p, irrigationType: v as IrrigationType }))}
-              disabled={running}
+              value={displayParams.irrigationType}
+              onValueChange={(v) => updateParams({ irrigationType: v as IrrigationType })}
             >
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -136,12 +99,16 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
             </Select>
           </div>
 
+          {/* ENSO */}
           <div className="space-y-2">
-            <Label>ENSO State</Label>
+            <Label>ENSO State
+              {isActive && pendingParams.ensoState !== undefined && (
+                <span className="ml-2 text-[10px] text-warning">(queued)</span>
+              )}
+            </Label>
             <Select
-              value={params.ensoState}
-              onValueChange={(v) => setParams((p) => ({ ...p, ensoState: v as ENSOState }))}
-              disabled={running}
+              value={displayParams.ensoState}
+              onValueChange={(v) => updateParams({ ensoState: v as ENSOState })}
             >
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -152,72 +119,110 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
             </Select>
           </div>
 
+          {/* Typhoon Prob — live */}
           <div className="space-y-2">
-            <Label>Typhoon Probability: {params.typhoonProbability}%</Label>
+            <Label>Typhoon Probability: {params.typhoonProbability}%
+              <span className="ml-2 text-[10px] text-primary">(live)</span>
+            </Label>
             <Slider
               value={[params.typhoonProbability]}
-              onValueChange={([v]) => setParams((p) => ({ ...p, typhoonProbability: v }))}
-              min={0}
-              max={40}
-              step={1}
-              disabled={running}
+              onValueChange={([v]) => updateParams({ typhoonProbability: v })}
+              min={0} max={40} step={1}
             />
           </div>
 
+          {/* Cycles */}
           <div className="space-y-2">
-            <Label>Crop Cycles: {params.numCycles}</Label>
+            <Label>Crop Cycles: {displayParams.cyclesTarget}
+              {isActive && pendingParams.cyclesTarget !== undefined && (
+                <span className="ml-2 text-[10px] text-warning">(queued)</span>
+              )}
+            </Label>
             <Slider
-              value={[params.numCycles]}
-              onValueChange={([v]) => setParams((p) => ({ ...p, numCycles: v }))}
-              min={1}
-              max={500}
-              step={1}
-              disabled={running}
+              value={[displayParams.cyclesTarget]}
+              onValueChange={([v]) => updateParams({ cyclesTarget: v })}
+              min={10} max={1000} step={10}
+              disabled={isActive}
             />
           </div>
 
+          {/* Speed */}
           <div className="space-y-2">
-            <Label>Speed: {speed <= 20 ? 'Max' : speed >= 400 ? 'Slow' : speed <= 100 ? 'Fast' : 'Normal'} ({speed}ms/cycle)</Label>
+            <Label>Speed: {speedMultiplier}× ({speedMultiplier} day/s)</Label>
             <Slider
-              value={[speed]}
+              value={[speedMultiplier]}
               onValueChange={([v]) => setSpeed(v)}
-              min={10}
-              max={500}
-              step={10}
+              min={0.5} max={20} step={0.5}
             />
+            <div className="flex gap-1 flex-wrap">
+              {[0.5, 1, 2, 5, 10, 20].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSpeed(s)}
+                  className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                    speedMultiplier === s
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'border-border text-muted-foreground hover:border-primary'
+                  }`}
+                >
+                  {SPEED_LABELS[s]}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {running && cycles.length > 0 && (
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Progress</span>
-                <span>{Math.round((cycles.length / params.numCycles) * 100)}%</span>
+          {/* Progress bars */}
+          {isActive && (
+            <div className="space-y-2">
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Cycle progress (day {currentDay}/{params.daysPerCycle})</span>
+                  <span>{Math.round(dayProgress * 100)}%</span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
+                  <div
+                    className="h-full bg-accent transition-all duration-100 rounded-full"
+                    style={{ width: `${dayProgress * 100}%` }}
+                  />
+                </div>
               </div>
-              <div className="h-2 w-full rounded-full bg-secondary overflow-hidden">
-                <div
-                  className="h-full bg-primary transition-all duration-150 rounded-full"
-                  style={{ width: `${(cycles.length / params.numCycles) * 100}%` }}
-                />
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Run progress ({currentCycleIndex}/{params.cyclesTarget} cycles)</span>
+                  <span>{Math.round(runProgress * 100)}%</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-secondary overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all duration-150 rounded-full"
+                    style={{ width: `${runProgress * 100}%` }}
+                  />
+                </div>
               </div>
             </div>
           )}
 
-          <div className="flex gap-2 pt-2">
-            <Button onClick={start} disabled={running} className="flex-1 gap-2">
-              <Play className="w-4 h-4" /> Animate
-            </Button>
-            <Button onClick={runInstant} disabled={running} variant="secondary" className="flex-1 gap-2">
-              <Zap className="w-4 h-4" /> Instant
-            </Button>
-          </div>
-          <div className="flex gap-2">
-            {running && (
-              <Button onClick={stop} variant="destructive" className="flex-1 gap-2">
-                <Pause className="w-4 h-4" /> Stop
+          {/* Buttons */}
+          <div className="flex gap-2 pt-2 flex-wrap">
+            {isIdle || isFinished ? (
+              <>
+                <Button onClick={start} className="flex-1 gap-2">
+                  <Play className="w-4 h-4" /> Animate
+                </Button>
+                <Button onClick={handleInstant} variant="secondary" className="flex-1 gap-2">
+                  <Zap className="w-4 h-4" /> Instant
+                </Button>
+              </>
+            ) : isRunning ? (
+              <Button onClick={pause} variant="outline" className="flex-1 gap-2">
+                <Pause className="w-4 h-4" /> Pause
+              </Button>
+            ) : (
+              <Button onClick={resume} className="flex-1 gap-2">
+                <Play className="w-4 h-4" /> Resume
               </Button>
             )}
-            <Button onClick={reset} variant="outline" className="flex-1 gap-2">
-              <RotateCcw className="w-4 h-4" /> Reset
+            <Button onClick={reset} variant="outline" className="gap-2" size="icon">
+              <RotateCcw className="w-4 h-4" />
             </Button>
           </div>
         </CardContent>
@@ -226,17 +231,17 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
       {/* Visualization */}
       <div className="lg:col-span-2 space-y-4">
         <WeatherScene
-          weather={currentCycle?.weather ?? null}
-          growthProgress={growthProgress}
+          weather={currentWeather}
+          growthProgress={dayProgress}
         />
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <AnimatePresence mode="popLayout">
             {[
-              { label: 'Cycle', value: currentCycle ? `${currentCycle.cycle} / ${params.numCycles}` : '—' },
-              { label: 'Season', value: currentCycle?.season ?? '—' },
-              { label: 'Current Yield', value: currentCycle ? `${currentCycle.finalYield.toFixed(2)} t/ha` : '—' },
-              { label: 'Avg Yield', value: cycles.length > 0 ? `${avgYield.toFixed(2)} t/ha` : '—' },
+              { label: 'Cycle', value: isActive || isFinished ? `${currentCycleIndex} / ${params.cyclesTarget}` : '—' },
+              { label: 'Season', value: currentWeather ?? '—' },
+              { label: 'Current Yield', value: currentYield != null ? `${currentYield.toFixed(2)} t/ha` : '—' },
+              { label: 'Running Mean', value: runningMean > 0 ? `${runningMean.toFixed(2)} t/ha` : '—' },
             ].map((stat) => (
               <motion.div
                 key={stat.label}
@@ -252,22 +257,25 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
           </AnimatePresence>
         </div>
 
-        {/* Mini yield history */}
-        {cycles.length > 0 && (
+        {/* Recent yield history */}
+        {recentYields.length > 0 && (
           <Card className="border-border">
             <CardContent className="pt-4">
-              <div className="text-xs text-muted-foreground mb-2">Yield History (last 50 cycles)</div>
+              <div className="text-xs text-muted-foreground mb-2">
+                Yield History — last {recentYields.length} cycles
+                {isRunning && <span className="ml-2 text-primary animate-pulse">● live</span>}
+              </div>
               <div className="flex items-end gap-[2px] h-20">
-                {cycles.slice(-50).map((c, i) => (
+                {recentYields.map((y, i) => (
                   <div
                     key={i}
-                    className="flex-1 rounded-t"
+                    className="flex-1 rounded-t transition-all duration-100"
                     style={{
-                      height: `${(c.finalYield / 5) * 100}%`,
+                      height: `${Math.min((y / 5) * 100, 100)}%`,
                       backgroundColor:
-                        c.finalYield < 2
+                        y < 2
                           ? 'hsl(var(--destructive))'
-                          : c.finalYield < 3
+                          : y < 3
                           ? 'hsl(var(--warning))'
                           : 'hsl(var(--primary))',
                     }}
@@ -276,6 +284,12 @@ export default function SimulationTab({ onComplete }: SimulationTabProps) {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {isIdle && (
+          <div className="flex items-center justify-center h-24 rounded-lg border border-dashed border-border">
+            <p className="text-muted-foreground text-sm">Press Animate or Instant to begin the simulation</p>
+          </div>
         )}
       </div>
     </div>
