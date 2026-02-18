@@ -1,21 +1,15 @@
 import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { runSimulation, SimulationParams, SimulationResults } from '@/lib/simulation';
+import { runSimulation } from '@/lib/simulation';
+import { useSimulation } from '@/context/SimulationContext';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-
-interface AnalysisTabProps {
-  baseParams: SimulationParams;
-}
-
-// ... keep existing code (compare function - lines 12-20)
 
 const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const TYPHOON_LEVELS = [0, 5, 10, 15, 20, 25, 30, 35, 40];
 
 function getHeatColor(value: number): string {
-  // value is low yield probability 0-1
   const pct = value * 100;
   if (pct < 5) return 'hsl(var(--primary))';
   if (pct < 10) return 'hsl(142 50% 45%)';
@@ -25,22 +19,30 @@ function getHeatColor(value: number): string {
   return 'hsl(var(--destructive))';
 }
 
-export default function AnalysisTab({ baseParams }: AnalysisTabProps) {
+export default function AnalysisTab() {
+  const { snap } = useSimulation();
+  const { params: liveParams } = snap;
+
+  // Use live params as base for scenario comparisons
+  const baseParams = useMemo(() => ({
+    plantingMonth: liveParams.plantingMonth,
+    irrigationType: liveParams.irrigationType,
+    ensoState: liveParams.ensoState,
+    typhoonProbability: liveParams.typhoonProbability,
+    numCycles: 1000,
+  }), [liveParams.plantingMonth, liveParams.irrigationType, liveParams.ensoState, liveParams.typhoonProbability]);
+
   const analysis = useMemo(() => {
-    const n = 1000;
-    const p = { ...baseParams, numCycles: n };
-
-    const irrigated = runSimulation({ ...p, irrigationType: 'Irrigated' });
-    const rainfed = runSimulation({ ...p, irrigationType: 'Rainfed' });
-
-    const elNino = runSimulation({ ...p, ensoState: 'El Niño' });
-    const neutral = runSimulation({ ...p, ensoState: 'Neutral' });
-    const laNina = runSimulation({ ...p, ensoState: 'La Niña' });
-
-    const lowTyphoon = runSimulation({ ...p, typhoonProbability: 5 });
-    const highTyphoon = runSimulation({ ...p, typhoonProbability: 35 });
-
-    return { irrigated, rainfed, elNino, neutral, laNina, lowTyphoon, highTyphoon };
+    const p = baseParams;
+    return {
+      irrigated: runSimulation({ ...p, irrigationType: 'Irrigated' }),
+      rainfed: runSimulation({ ...p, irrigationType: 'Rainfed' }),
+      elNino: runSimulation({ ...p, ensoState: 'El Niño' }),
+      neutral: runSimulation({ ...p, ensoState: 'Neutral' }),
+      laNina: runSimulation({ ...p, ensoState: 'La Niña' }),
+      lowTyphoon: runSimulation({ ...p, typhoonProbability: 5 }),
+      highTyphoon: runSimulation({ ...p, typhoonProbability: 35 }),
+    };
   }, [baseParams]);
 
   const heatmapData = useMemo(() => {
@@ -53,63 +55,39 @@ export default function AnalysisTab({ baseParams }: AnalysisTabProps) {
           typhoonProbability: typhoon,
           numCycles: 500,
         });
-        data.push({
-          month,
-          monthLabel: MONTH_NAMES_SHORT[month - 1],
-          typhoon,
-          meanYield: res.meanYield,
-          lowRisk: res.lowYieldProbability,
-        });
+        data.push({ month, monthLabel: MONTH_NAMES_SHORT[month - 1], typhoon, meanYield: res.meanYield, lowRisk: res.lowYieldProbability });
       }
     }
     return data;
   }, [baseParams]);
 
-  const irrigationData = [
-    {
-      category: 'Mean Yield',
-      Irrigated: Number(analysis.irrigated.meanYield.toFixed(2)),
-      Rainfed: Number(analysis.rainfed.meanYield.toFixed(2)),
-    },
-  ];
-
-  const ensoData = [
-    {
-      category: 'Mean Yield (t/ha)',
-      'El Niño': Number(analysis.elNino.meanYield.toFixed(2)),
-      Neutral: Number(analysis.neutral.meanYield.toFixed(2)),
-      'La Niña': Number(analysis.laNina.meanYield.toFixed(2)),
-    },
-  ];
-
-  const typhoonData = [
-    {
-      category: 'Mean Yield',
-      'Low (5%)': Number(analysis.lowTyphoon.meanYield.toFixed(2)),
-      'High (35%)': Number(analysis.highTyphoon.meanYield.toFixed(2)),
-    },
-  ];
-
+  const irrigationData = [{ category: 'Mean Yield', Irrigated: +analysis.irrigated.meanYield.toFixed(2), Rainfed: +analysis.rainfed.meanYield.toFixed(2) }];
+  const ensoData = [{ category: 'Mean Yield (t/ha)', 'El Niño': +analysis.elNino.meanYield.toFixed(2), Neutral: +analysis.neutral.meanYield.toFixed(2), 'La Niña': +analysis.laNina.meanYield.toFixed(2) }];
+  const typhoonData = [{ category: 'Mean Yield', 'Low (5%)': +analysis.lowTyphoon.meanYield.toFixed(2), 'High (35%)': +analysis.highTyphoon.meanYield.toFixed(2) }];
   const riskData = [
-    { scenario: 'Irrigated', risk: Number((analysis.irrigated.lowYieldProbability * 100).toFixed(1)) },
-    { scenario: 'Rainfed', risk: Number((analysis.rainfed.lowYieldProbability * 100).toFixed(1)) },
-    { scenario: 'El Niño', risk: Number((analysis.elNino.lowYieldProbability * 100).toFixed(1)) },
-    { scenario: 'Neutral', risk: Number((analysis.neutral.lowYieldProbability * 100).toFixed(1)) },
-    { scenario: 'La Niña', risk: Number((analysis.laNina.lowYieldProbability * 100).toFixed(1)) },
-    { scenario: 'Low Typhoon', risk: Number((analysis.lowTyphoon.lowYieldProbability * 100).toFixed(1)) },
-    { scenario: 'High Typhoon', risk: Number((analysis.highTyphoon.lowYieldProbability * 100).toFixed(1)) },
+    { scenario: 'Irrigated',    risk: +(analysis.irrigated.lowYieldProbability * 100).toFixed(1) },
+    { scenario: 'Rainfed',      risk: +(analysis.rainfed.lowYieldProbability * 100).toFixed(1) },
+    { scenario: 'El Niño',      risk: +(analysis.elNino.lowYieldProbability * 100).toFixed(1) },
+    { scenario: 'Neutral',      risk: +(analysis.neutral.lowYieldProbability * 100).toFixed(1) },
+    { scenario: 'La Niña',      risk: +(analysis.laNina.lowYieldProbability * 100).toFixed(1) },
+    { scenario: 'Low Typhoon',  risk: +(analysis.lowTyphoon.lowYieldProbability * 100).toFixed(1) },
+    { scenario: 'High Typhoon', risk: +(analysis.highTyphoon.lowYieldProbability * 100).toFixed(1) },
   ];
 
   return (
     <div className="space-y-6">
-      {/* Yield Risk Heatmap */}
+      <p className="text-xs text-muted-foreground">
+        Scenarios computed from live simulation params — reflects current planting month, irrigation, and ENSO state.
+      </p>
+
+      {/* Heatmap */}
       <Card className="border-border">
         <CardHeader>
           <CardTitle className="text-base">Yield Risk Heatmap — Planting Month × Typhoon Probability</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground mb-4">
-            Each cell shows the probability of low yield (&lt;2.0 t/ha) from 500 Monte Carlo cycles. Darker red = higher risk.
+            Each cell shows the probability of low yield (&lt;2.0 t/ha) from 500 Monte Carlo cycles.
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -159,7 +137,6 @@ export default function AnalysisTab({ baseParams }: AnalysisTabProps) {
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Irrigation Comparison */}
         <Card className="border-border">
           <CardHeader><CardTitle className="text-base">Irrigated vs Rainfed</CardTitle></CardHeader>
           <CardContent>
@@ -174,13 +151,9 @@ export default function AnalysisTab({ baseParams }: AnalysisTabProps) {
                 <Bar dataKey="Rainfed" fill="hsl(var(--chart-3))" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
-            <p className="text-xs text-muted-foreground mt-3">
-              Irrigated fields yield ~0.3 t/ha more on average, reducing drought vulnerability.
-            </p>
           </CardContent>
         </Card>
 
-        {/* ENSO Comparison */}
         <Card className="border-border">
           <CardHeader><CardTitle className="text-base">ENSO State Comparison</CardTitle></CardHeader>
           <CardContent>
@@ -196,13 +169,9 @@ export default function AnalysisTab({ baseParams }: AnalysisTabProps) {
                 <Bar dataKey="La Niña" fill="hsl(var(--chart-2))" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
-            <p className="text-xs text-muted-foreground mt-3">
-              La Niña conditions tend to increase rainfall, benefiting yields. El Niño causes drought stress, reducing yields by ~0.4 t/ha.
-            </p>
           </CardContent>
         </Card>
 
-        {/* Typhoon Comparison */}
         <Card className="border-border">
           <CardHeader><CardTitle className="text-base">Typhoon Probability Impact</CardTitle></CardHeader>
           <CardContent>
@@ -217,13 +186,9 @@ export default function AnalysisTab({ baseParams }: AnalysisTabProps) {
                 <Bar dataKey="High (35%)" fill="hsl(var(--chart-5))" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
-            <p className="text-xs text-muted-foreground mt-3">
-              High typhoon probability dramatically reduces expected yield and increases crop failure risk.
-            </p>
           </CardContent>
         </Card>
 
-        {/* Risk of Crop Failure */}
         <Card className="border-border">
           <CardHeader><CardTitle className="text-base">Crop Failure Risk (Yield &lt; 2.0 t/ha)</CardTitle></CardHeader>
           <CardContent>
@@ -236,14 +201,10 @@ export default function AnalysisTab({ baseParams }: AnalysisTabProps) {
                 <Bar dataKey="risk" fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
-            <p className="text-xs text-muted-foreground mt-3">
-              Crop failure risk is highest under El Niño + high typhoon scenarios, exceeding 30% in some cases.
-            </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Interpretation */}
       <Card className="border-border">
         <CardHeader><CardTitle className="text-base">Key Findings</CardTitle></CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-2">
