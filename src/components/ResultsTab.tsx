@@ -1,3 +1,6 @@
+import { useCallback } from 'react';
+import { Download } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useSimulation } from '@/context/SimulationContext';
 import { WeatherType } from '@/lib/simulation';
@@ -20,6 +23,77 @@ export default function ResultsTab() {
     params } = snap;
 
   const hasData = currentCycleIndex > 0;
+
+  const handleExport = useCallback(() => {
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const s = snap.summary;
+    const ciLowVal  = s?.ciLow  ?? (snap.runningMean - 1.96 * snap.runningSd / Math.sqrt(Math.max(1, snap.currentCycleIndex)));
+    const ciHighVal = s?.ciHigh ?? (snap.runningMean + 1.96 * snap.runningSd / Math.sqrt(Math.max(1, snap.currentCycleIndex)));
+
+    const sections: string[] = [];
+
+    // ── Section 1: Simulation Parameters ──
+    sections.push('SIMULATION PARAMETERS');
+    sections.push('Parameter,Value');
+    sections.push(`Planting Month,${MONTH_NAMES[snap.params.plantingMonth - 1]}`);
+    sections.push(`Irrigation Type,${snap.params.irrigationType}`);
+    sections.push(`ENSO State,${snap.params.ensoState}`);
+    sections.push(`Typhoon Probability,${snap.params.typhoonProbability}%`);
+    sections.push(`Target Cycles,${snap.params.cyclesTarget}`);
+    sections.push(`Days Per Cycle,${snap.params.daysPerCycle}`);
+    sections.push('');
+
+    // ── Section 2: Summary Statistics ──
+    sections.push('SUMMARY STATISTICS');
+    sections.push('Metric,Value,Unit');
+    sections.push(`Completed Cycles,${snap.currentCycleIndex},cycles`);
+    sections.push(`Mean Yield,${snap.runningMean.toFixed(4)},t/ha`);
+    sections.push(`Std Deviation,${snap.runningSd.toFixed(4)},t/ha`);
+    sections.push(`Min Yield,${s ? s.min.toFixed(4) : 'N/A'},t/ha`);
+    sections.push(`Max Yield,${s ? s.max.toFixed(4) : 'N/A'},t/ha`);
+    sections.push(`5th Percentile,${s ? s.percentile5.toFixed(4) : 'N/A'},t/ha`);
+    sections.push(`95th Percentile,${s ? s.percentile95.toFixed(4) : 'N/A'},t/ha`);
+    sections.push(`95% CI Lower,${ciLowVal.toFixed(4)},t/ha`);
+    sections.push(`95% CI Upper,${ciHighVal.toFixed(4)},t/ha`);
+    sections.push(`P(Yield < 2.0 t/ha),${(snap.lowYieldProb * 100).toFixed(2)},%`);
+    sections.push('');
+
+    // ── Section 3: Weather Frequencies ──
+    sections.push('WEATHER FREQUENCIES');
+    sections.push('Weather Type,Count,Proportion (%)');
+    const totalW = Object.values(snap.weatherCounts).reduce((a, b) => a + b, 0);
+    (Object.keys(snap.weatherCounts) as WeatherType[]).forEach((k) => {
+      const cnt = snap.weatherCounts[k];
+      sections.push(`${k},${cnt},${totalW > 0 ? ((cnt / totalW) * 100).toFixed(2) : '0.00'}`);
+    });
+    sections.push('');
+
+    // ── Section 4: Yield Distribution Histogram ──
+    sections.push('YIELD DISTRIBUTION HISTOGRAM');
+    sections.push('Bin (t/ha),Count,Proportion (%)');
+    const totalH = snap.histogramBins.reduce((a, b) => a + b.count, 0);
+    snap.histogramBins.forEach((b) => {
+      sections.push(`${b.label},${b.count},${totalH > 0 ? ((b.count / totalH) * 100).toFixed(2) : '0.00'}`);
+    });
+    sections.push('');
+
+    // ── Section 5: Running Mean Convergence ──
+    sections.push('RUNNING MEAN CONVERGENCE');
+    sections.push('Cycle,Running Mean (t/ha)');
+    snap.yieldHistoryOverTime.forEach((v, i) => {
+      sections.push(`${i + 1},${v.toFixed(4)}`);
+    });
+
+    const csvContent = sections.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const ts = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
+    link.href = url;
+    link.download = `rice_yield_simulation_${ts}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [snap]);
 
   if (!hasData) {
     return (
@@ -57,13 +131,26 @@ export default function ResultsTab() {
 
   return (
     <div className="space-y-6">
-      {/* Live indicator */}
-      {status === 'running' && (
-        <div className="flex items-center gap-2 text-sm text-primary">
-          <span className="w-2 h-2 rounded-full bg-primary animate-pulse inline-block" />
-          Live — results update as cycles complete
+      {/* Header row */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          {status === 'running' && (
+            <div className="flex items-center gap-2 text-sm text-primary">
+              <span className="w-2 h-2 rounded-full bg-primary animate-pulse inline-block" />
+              Live — results update as cycles complete
+            </div>
+          )}
+          {status === 'finished' && (
+            <p className="text-sm text-muted-foreground">
+              Simulation complete — {currentCycleIndex} cycles recorded.
+            </p>
+          )}
         </div>
-      )}
+        <Button onClick={handleExport} variant="outline" className="gap-2 shrink-0">
+          <Download className="w-4 h-4" />
+          Export CSV
+        </Button>
+      </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
