@@ -76,9 +76,14 @@ export default function AnalysisTab() {
 
   return (
     <div className="space-y-6">
-      <p className="text-xs text-muted-foreground">
-        Scenarios computed from live simulation params — reflects current planting month, irrigation, and ENSO state.
-      </p>
+      <div>
+        <h2 className="text-xl font-bold text-foreground" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+          Scenario Analysis
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5" style={{ fontFamily: "'Poppins', sans-serif" }}>
+          Scenarios computed from live simulation parameters · 1,000 Monte Carlo cycles each · 1 t/ha = 20 sacks (50 kg)
+        </p>
+      </div>
 
       {/* Heatmap */}
       <Card className="border-border">
@@ -206,13 +211,15 @@ export default function AnalysisTab() {
       </div>
 
       <Card className="border-border">
-        <CardHeader><CardTitle className="text-base">Key Findings</CardTitle></CardHeader>
-        <CardContent className="text-sm text-muted-foreground space-y-2">
-          <p>• <strong>Irrigation</strong> is the most controllable factor, consistently adding ~0.3 t/ha and reducing crop failure probability.</p>
-          <p>• <strong>ENSO state</strong> has a significant effect: El Niño reduces yields by 0.4 t/ha on average, while La Niña increases them by 0.3 t/ha.</p>
-          <p>• <strong>Typhoon frequency</strong> is the largest risk factor. At 35% probability, expected yield drops significantly and crop failure risk rises sharply.</p>
-          <p>• The <strong>heatmap</strong> reveals that wet season months (Jun–Oct) combined with high typhoon probability create the highest risk zones.</p>
-          <p>• The Monte Carlo approach (500–1,000 cycles per scenario) provides robust statistical estimates for risk-based decision making.</p>
+        <CardHeader>
+          <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Key Findings</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground space-y-2" style={{ fontFamily: "'Poppins', sans-serif" }}>
+          <p>• <strong>Irrigation</strong> is the most controllable factor, adding ~0.3 t/ha (~6 sacks per hectare) and meaningfully reducing crop failure probability.</p>
+          <p>• <strong>ENSO state</strong> has a significant effect: El Niño reduces yields by ~8 sacks per hectare on average, while La Niña adds ~6 sacks.</p>
+          <p>• <strong>Typhoon frequency</strong> is the largest uncontrollable risk. At 35% probability, expected yield drops significantly and crop failure risk rises sharply.</p>
+          <p>• The <strong>heatmap</strong> shows that wet season months (June–October) combined with high typhoon probability create the highest-risk zones for Filipino farmers.</p>
+          <p>• Monte Carlo simulation (500–1,000 cycles per scenario) gives statistically robust estimates for farm-level risk and insurance planning.</p>
         </CardContent>
       </Card>
     </div>
