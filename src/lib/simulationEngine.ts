@@ -1,12 +1,23 @@
-import { getSeason, getWeather, WeatherType, IrrigationType, ENSOState, Season } from './simulation';
+﻿import {
+  getSeason,
+  getWeather,
+  getTyphoonSeverity,
+  WeatherType,
+  TyphoonSeverity,
+  IrrigationType,
+  ENSOState,
+  Season,
+  Region,
+} from './simulation';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// --------------------------------------------------
 
 export type SimStatus = 'idle' | 'running' | 'paused' | 'finished';
 export type SimMode = 'day' | 'cycle';
 
 export interface EngineParams {
   plantingMonth: number;       // 1-12
+  region: Region;
   irrigationType: IrrigationType;
   ensoState: ENSOState;
   typhoonProbability: number;  // 0-40 (%)
@@ -25,8 +36,12 @@ export interface CycleRecord {
   yieldSacks: number;
   season: Season;
   weather: WeatherType;
+  dominantTyphoonSeverity: TyphoonSeverity | null;
+  typhoonDays: number;
+  severeTyphoonDays: number;
   ensoState: ENSOState;
   irrigationType: IrrigationType;
+  region: Region;
   plantingMonth: number;
   typhoonProbability: number;
 }
@@ -64,6 +79,7 @@ export interface EngineSnapshot {
   // weather counts
   weatherCounts: Record<WeatherType, number>;
   dailyWeatherCounts: Record<WeatherType, number>;
+  dailyTyphoonSeverityCounts: Record<TyphoonSeverity, number>;
 
   // histogram bins
   histogramBins: HistogramBin[];
@@ -72,13 +88,14 @@ export interface EngineSnapshot {
   summary: {
     mean: number; std: number; min: number; max: number;
     percentile5: number; percentile95: number;
-    ciLow: number; ciHigh: number;
+    ciLow: number; ciHigh: number; ciWidth: number;
+    deterministicSd: number; noiseSd: number;
   } | null;
 }
 
 type Listener = (snap: EngineSnapshot) => void;
 
-// ─── Histogram helpers ────────────────────────────────────────────────────────
+// --------------------------------------------------
 
 const BINS_STEP = 0.5;
 const BINS_MAX = 5.5;
@@ -97,10 +114,14 @@ function addToBin(bins: HistogramBin[], y: number) {
   if (idx >= 0) bins[idx].count++;
 }
 
-// ─── Yield model ──────────────────────────────────────────────────────────────
+// --------------------------------------------------
 
 const BASE_YIELDS: Record<WeatherType, number> = {
   Dry: 2.0, Normal: 3.0, Wet: 3.3, Typhoon: 1.2,
+};
+const TYPHOON_YIELDS: Record<TyphoonSeverity, number> = {
+  Moderate: 1.4,
+  Severe: 0.8,
 };
 const IRRIGATION_ADJ: Record<IrrigationType, number> = { Irrigated: 0.3, Rainfed: 0 };
 const ENSO_ADJ: Record<ENSOState, number> = { 'El Niño': -0.4, Neutral: 0, 'La Niña': 0.3 };
@@ -112,13 +133,18 @@ function gaussianNoise(mean = 0, sd = 0.2): number {
   return mean + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-function computeYield(weather: WeatherType, p: EngineParams): number {
-  const base = BASE_YIELDS[weather];
+function computeYield(weather: WeatherType, p: EngineParams, typhoonSeverity: TyphoonSeverity | null) {
+  const base = weather === 'Typhoon' && typhoonSeverity
+    ? TYPHOON_YIELDS[typhoonSeverity]
+    : BASE_YIELDS[weather];
   const adj = IRRIGATION_ADJ[p.irrigationType] + ENSO_ADJ[p.ensoState];
-  return Math.max(0, base + adj + gaussianNoise());
+  const deterministic = base + adj;
+  const noise = gaussianNoise();
+  const final = Math.max(0, deterministic + noise);
+  return { final, deterministic, noise, base };
 }
 
-// ─── Engine ───────────────────────────────────────────────────────────────────
+// --------------------------------------------------
 
 class SimulationEngine {
   private listeners = new Set<Listener>();
@@ -134,6 +160,7 @@ class SimulationEngine {
 
   private params: EngineParams = {
     plantingMonth: 6,
+    region: 'Luzon',
     irrigationType: 'Irrigated',
     ensoState: 'Neutral',
     typhoonProbability: 15,
@@ -154,6 +181,10 @@ class SimulationEngine {
   private welfordCount = 0;
   private welfordMean = 0;
   private welfordM2 = 0;
+  private deterministicMean = 0;
+  private deterministicM2 = 0;
+  private noiseMean = 0;
+  private noiseM2 = 0;
   private lowYieldCount = 0;
   private minYield = Infinity;
   private maxYield = -Infinity;
@@ -169,6 +200,7 @@ class SimulationEngine {
   // weather counts
   private weatherCounts: Record<WeatherType, number> = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
   private dailyWeatherCounts: Record<WeatherType, number> = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+  private dailyTyphoonSeverityCounts: Record<TyphoonSeverity, number> = { Moderate: 0, Severe: 0 };
 
   // histogram
   private histogramBins: HistogramBin[] = initBins();
@@ -177,12 +209,14 @@ class SimulationEngine {
 
   // per-cycle weather (accumulated over days)
   private cycleWeatherAccum: Record<WeatherType, number> = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+  private cycleTyphoonSeverityCounts: Record<TyphoonSeverity, number> = { Moderate: 0, Severe: 0 };
+  private cycleTyphoonSeveritySequence: (TyphoonSeverity | null)[] = [];
 
   // throttle emissions
   private lastEmitTime = 0;
   private readonly EMIT_INTERVAL_MS = 50; // ~20 fps
 
-  // ─── Public API ─────────────────────────────────────────────────────────────
+// --------------------------------------------------
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -263,7 +297,7 @@ class SimulationEngine {
     this.emit(true);
   }
 
-  // ─── Internal ────────────────────────────────────────────────────────────────
+// --------------------------------------------------
 
   private resetInternals() {
     this.currentCycleIndex = 0;
@@ -275,6 +309,10 @@ class SimulationEngine {
     this.welfordCount = 0;
     this.welfordMean = 0;
     this.welfordM2 = 0;
+    this.deterministicMean = 0;
+    this.deterministicM2 = 0;
+    this.noiseMean = 0;
+    this.noiseM2 = 0;
     this.lowYieldCount = 0;
     this.minYield = Infinity;
     this.maxYield = -Infinity;
@@ -287,8 +325,11 @@ class SimulationEngine {
     this.summaryCache = null;
     this.weatherCounts = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
     this.dailyWeatherCounts = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+    this.dailyTyphoonSeverityCounts = { Moderate: 0, Severe: 0 };
     this.histogramBins = initBins();
     this.cycleWeatherAccum = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+    this.cycleTyphoonSeverityCounts = { Moderate: 0, Severe: 0 };
+    this.cycleTyphoonSeveritySequence = [];
     this.accumulatedMs = 0;
     this.cycleElapsedMs = 0;
     // commit pending
@@ -332,8 +373,14 @@ class SimulationEngine {
       return;
     }
 
-    const season = getSeason(this.params.plantingMonth);
-    const weather = getWeather(season, this.params.typhoonProbability / 100);
+    const season = getSeason(this.params.plantingMonth, this.params.region);
+    const weather = getWeather(this.params.plantingMonth, this.params.typhoonProbability / 100, this.params.region);
+    let typhoonSeverity: TyphoonSeverity | null = null;
+    if (weather === 'Typhoon') {
+      typhoonSeverity = getTyphoonSeverity(this.params.region);
+      this.cycleTyphoonSeverityCounts[typhoonSeverity]++;
+      this.dailyTyphoonSeverityCounts[typhoonSeverity]++;
+    }
 
     this.currentDay++;
     this.currentWeather = weather;
@@ -367,7 +414,7 @@ class SimulationEngine {
       this.currentDay = this.params.daysPerCycle;
       this.currentCycleWeatherTimeline = [...this.cycleWeatherSequence];
       const dominantWeather = this.getDominantWeather();
-      const season = getSeason(this.params.plantingMonth);
+      const season = getSeason(this.params.plantingMonth, this.params.region);
       this.finalizeCycle(season, dominantWeather);
 
       if (this.currentCycleIndex >= this.params.cyclesTarget) {
@@ -403,14 +450,22 @@ class SimulationEngine {
   }
 
   private prepareCycle() {
-    const season = getSeason(this.params.plantingMonth);
     const tProb = this.params.typhoonProbability / 100;
     this.cycleWeatherSequence = [];
     this.cycleWeatherAccum = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+    this.cycleTyphoonSeverityCounts = { Moderate: 0, Severe: 0 };
+    this.cycleTyphoonSeveritySequence = [];
     for (let d = 0; d < this.params.daysPerCycle; d++) {
-      const w = getWeather(season, tProb);
+      const w = getWeather(this.params.plantingMonth, tProb, this.params.region);
       this.cycleWeatherSequence.push(w);
       this.cycleWeatherAccum[w]++;
+      if (w === 'Typhoon') {
+        const severity = getTyphoonSeverity(this.params.region);
+        this.cycleTyphoonSeverityCounts[severity]++;
+        this.cycleTyphoonSeveritySequence.push(severity);
+      } else {
+        this.cycleTyphoonSeveritySequence.push(null);
+      }
     }
     this.currentDay = 0;
     this.currentWeather = this.cycleWeatherSequence[0] ?? null;
@@ -418,13 +473,22 @@ class SimulationEngine {
   }
 
   private finalizeCycle(season: Season, dominantWeather: WeatherType) {
-    const yld = computeYield(dominantWeather, this.params);
+    const typhoonDays = this.cycleTyphoonSeverityCounts.Moderate + this.cycleTyphoonSeverityCounts.Severe;
+    const dominantTyphoonSeverity =
+      dominantWeather === 'Typhoon' && typhoonDays > 0
+        ? (this.cycleTyphoonSeverityCounts.Severe >= this.cycleTyphoonSeverityCounts.Moderate ? 'Severe' : 'Moderate')
+        : null;
+
+    const { final: yld, deterministic, noise } = computeYield(dominantWeather, this.params, dominantTyphoonSeverity);
     this.currentYield = yld;
 
     this.weatherCounts[dominantWeather]++;
     if (this.mode === 'cycle') {
       (Object.keys(this.cycleWeatherAccum) as WeatherType[]).forEach((key) => {
         this.dailyWeatherCounts[key] += this.cycleWeatherAccum[key];
+      });
+      (Object.keys(this.cycleTyphoonSeverityCounts) as TyphoonSeverity[]).forEach((key) => {
+        this.dailyTyphoonSeverityCounts[key] += this.cycleTyphoonSeverityCounts[key];
       });
     }
 
@@ -433,6 +497,16 @@ class SimulationEngine {
     this.welfordMean += delta / this.welfordCount;
     const delta2 = yld - this.welfordMean;
     this.welfordM2 += delta * delta2;
+
+    const dDelta = deterministic - this.deterministicMean;
+    this.deterministicMean += dDelta / this.welfordCount;
+    const dDelta2 = deterministic - this.deterministicMean;
+    this.deterministicM2 += dDelta * dDelta2;
+
+    const nDelta = noise - this.noiseMean;
+    this.noiseMean += nDelta / this.welfordCount;
+    const nDelta2 = noise - this.noiseMean;
+    this.noiseM2 += nDelta * nDelta2;
 
     if (yld < 2.0) this.lowYieldCount++;
     if (yld < this.minYield) this.minYield = yld;
@@ -451,8 +525,12 @@ class SimulationEngine {
       yieldSacks: yld * 20,
       season,
       weather: dominantWeather,
+      dominantTyphoonSeverity,
+      typhoonDays,
+      severeTyphoonDays: this.cycleTyphoonSeverityCounts.Severe,
       ensoState: this.params.ensoState,
       irrigationType: this.params.irrigationType,
+      region: this.params.region,
       plantingMonth: this.params.plantingMonth,
       typhoonProbability: this.params.typhoonProbability,
     };
@@ -475,6 +553,8 @@ class SimulationEngine {
     this.currentCycleIndex++;
     this.currentDay = 0;
     this.cycleWeatherAccum = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+    this.cycleTyphoonSeverityCounts = { Moderate: 0, Severe: 0 };
+    this.cycleTyphoonSeveritySequence = [];
     this.currentCycleWeatherTimeline = [];
     this.cycleWeatherSequence = [];
   }
@@ -492,6 +572,16 @@ class SimulationEngine {
     return Math.sqrt(this.welfordM2 / this.welfordCount);
   }
 
+  private deterministicSd(): number {
+    if (this.welfordCount < 2) return 0;
+    return Math.sqrt(this.deterministicM2 / this.welfordCount);
+  }
+
+  private noiseSd(): number {
+    if (this.welfordCount < 2) return 0;
+    return Math.sqrt(this.noiseM2 / this.welfordCount);
+  }
+
   private computeSummary() {
     if (this.allYields.length === 0) return null;
     const sorted = [...this.allYields].sort((a, b) => a - b);
@@ -499,6 +589,8 @@ class SimulationEngine {
     const mean = this.welfordMean;
     const sd = this.welfordSd();
     const se = n > 0 ? sd / Math.sqrt(n) : 0;
+    const ciLow = mean - 1.96 * se;
+    const ciHigh = mean + 1.96 * se;
     return {
       mean,
       std: sd,
@@ -506,8 +598,11 @@ class SimulationEngine {
       max: this.maxYield === -Infinity ? 0 : this.maxYield,
       percentile5: sorted[Math.floor(n * 0.05)] ?? 0,
       percentile95: sorted[Math.floor(n * 0.95)] ?? 0,
-      ciLow: mean - 1.96 * se,
-      ciHigh: mean + 1.96 * se,
+      ciLow,
+      ciHigh,
+      ciWidth: ciHigh - ciLow,
+      deterministicSd: this.deterministicSd(),
+      noiseSd: this.noiseSd(),
     };
   }
 
@@ -541,6 +636,7 @@ class SimulationEngine {
 
       weatherCounts: { ...this.weatherCounts },
       dailyWeatherCounts: { ...this.dailyWeatherCounts },
+      dailyTyphoonSeverityCounts: { ...this.dailyTyphoonSeverityCounts },
       histogramBins: this.histogramBins.map(b => ({ ...b })),
 
       summary: this.summaryCache,
@@ -553,6 +649,6 @@ class SimulationEngine {
   }
 }
 
-// ─── Singleton ────────────────────────────────────────────────────────────────
+// --------------------------------------------------
 
 export const engine = new SimulationEngine();

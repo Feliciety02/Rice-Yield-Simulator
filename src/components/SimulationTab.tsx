@@ -9,7 +9,7 @@ import { Slider } from '@/components/ui/slider';
 import WeatherScene from './WeatherScene';
 import ChartLegend from './ChartLegend';
 import { useSimulationStore } from '@/store/simulationStore';
-import { IrrigationType, ENSOState, WeatherType, getSeason } from '@/lib/simulation';
+import { IrrigationType, ENSOState, WeatherType, getWeatherWeights, Region } from '@/lib/simulation';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Cell, LineChart, Line, Area, ComposedChart,
@@ -67,21 +67,16 @@ function firstWeekday(year: number, monthIndex: number) {
   return new Date(year, monthIndex, 1).getDay();
 }
 
-function seededWeather(day: number, month: number, year: number, season: string, typhoonProb: number) {
+function seededWeather(day: number, month: number, year: number, region: Region, typhoonProb: number) {
   const seed = Math.abs(Math.sin(day * 13 + month * 17 + year * 19) * 10000);
   const r = seed - Math.floor(seed);
-  const weights =
-    season === 'Dry Season'
-      ? { Dry: 0.5, Normal: 0.4, Wet: 0.1, Typhoon: 0.05 }
-      : { Dry: 0.1, Normal: 0.4, Wet: 0.35, Typhoon: Math.max(0, typhoonProb) };
-  const total = weights.Dry + weights.Normal + weights.Wet + weights.Typhoon;
-  const scaled = r * total;
+  const weights = getWeatherWeights(month, typhoonProb, region);
   let acc = weights.Dry;
-  if (scaled < acc) return 'Dry' as WeatherType;
+  if (r < acc) return 'Dry' as WeatherType;
   acc += weights.Normal;
-  if (scaled < acc) return 'Normal' as WeatherType;
+  if (r < acc) return 'Normal' as WeatherType;
   acc += weights.Wet;
-  if (scaled < acc) return 'Wet' as WeatherType;
+  if (r < acc) return 'Wet' as WeatherType;
   return 'Typhoon' as WeatherType;
 }
 
@@ -89,11 +84,13 @@ function WeatherTimeline({
   timeline,
   daysPerCycle,
   plantingMonth,
+  region,
   typhoonProbability,
 }: {
   timeline: WeatherType[];
   daysPerCycle: number;
   plantingMonth: number;
+  region: Region;
   typhoonProbability: number;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -109,7 +106,6 @@ function WeatherTimeline({
 
   const monthName = MONTH_NAMES[calendarMonth];
   const daysInSelectedMonth = daysInMonth(calendarYear, calendarMonth);
-  const season = getSeason(plantingMonth);
   const useActual = calendarMonth === plantingMonth - 1;
 
   const gapDays = 30;
@@ -148,7 +144,7 @@ function WeatherTimeline({
       }
     }
 
-    const weather = seededWeather(day, calendarMonth + 1, calendarYear, season, typhoonProbability / 100);
+    const weather = seededWeather(day, calendarMonth + 1, calendarYear, region, typhoonProbability / 100);
     return { day, weather };
   });
 
@@ -400,7 +396,7 @@ export default function SimulationTab() {
     status, mode, params, pendingParams, speedMultiplier,
     currentCycleIndex, currentDay, dayProgress,
     currentWeather, currentYield, runningMean, runningSd, lowYieldProb,
-    histogramBins, dailyWeatherCounts, yieldSeries, yieldBandSeries, yieldHistoryOverTime,
+    histogramBins, dailyWeatherCounts, dailyTyphoonSeverityCounts, yieldSeries, yieldBandSeries, yieldHistoryOverTime,
     currentCycleWeatherTimeline, cycleRecords, summary,
   } = snap;
 
@@ -463,6 +459,8 @@ export default function SimulationTab() {
     isFarmer
       ? `${formatSacks(low)} to ${formatSacks(high)} sacks`
       : `${low.toFixed(2)} to ${high.toFixed(2)} t/ha`;
+  const yieldTooltipFormatter = (value: number) =>
+    isFarmer ? `${formatSacks(Number(value))} sacks` : `${Number(value).toFixed(2)} t/ha`;
 
   const confidence = useMemo(() => {
     const n = cycleRecords.length;
@@ -493,10 +491,14 @@ export default function SimulationTab() {
     }
     const typhoon = entries.find((e) => e.key === 'Typhoon');
     if (typhoon && typhoon.count > 0) {
-      parts.push('A few typhoon days may lower harvest.');
+      if (dailyTyphoonSeverityCounts.Severe > 0) {
+        parts.push('Severe typhoon days can reduce harvest the most.');
+      } else {
+        parts.push('A few typhoon days may lower harvest.');
+      }
     }
     return parts.join('; ') + '.';
-  }, [dailyWeatherCounts, totalWeather]);
+  }, [dailyWeatherCounts, dailyTyphoonSeverityCounts, totalWeather]);
 
   const presets = [
     { label: 'Dry Season Rainfed', params: { plantingMonth: 2, irrigationType: 'Rainfed' as IrrigationType, ensoState: 'Neutral' as ENSOState, typhoonProbability: 5 } },
@@ -510,7 +512,7 @@ export default function SimulationTab() {
     if (cycleRecords.length === 0) return;
 
     const rows: string[] = [];
-    rows.push('Cycle,Final Yield (t/ha),Final Yield (sacks),Season,Weather,ENSO State,Irrigation Type,Planting Month,Typhoon Probability (%)');
+    rows.push('Cycle,Final Yield (t/ha),Final Yield (sacks),Season,Weather,Dominant Typhoon Severity,Typhoon Days,Severe Typhoon Days,ENSO State,Irrigation Type,Region,Planting Month,Typhoon Probability (%)');
     cycleRecords.forEach((r) => {
       rows.push([
         r.cycleIndex,
@@ -518,8 +520,12 @@ export default function SimulationTab() {
         r.yieldSacks.toFixed(2),
         r.season,
         r.weather,
+        r.dominantTyphoonSeverity ?? '',
+        r.typhoonDays,
+        r.severeTyphoonDays,
         r.ensoState,
         r.irrigationType,
+        r.region,
         r.plantingMonth,
         r.typhoonProbability.toFixed(1),
       ].join(','));
@@ -542,6 +548,11 @@ export default function SimulationTab() {
     rows.push(`95th Percentile (t/ha),${(s?.percentile95 ?? 0).toFixed(4)}`);
     rows.push(`95% CI Lower (t/ha),${ciLow.toFixed(4)}`);
     rows.push(`95% CI Upper (t/ha),${ciHigh.toFixed(4)}`);
+    if (s) {
+      rows.push(`CI Width (t/ha),${s.ciWidth.toFixed(4)}`);
+      rows.push(`Weather Variability SD (t/ha),${s.deterministicSd.toFixed(4)}`);
+      rows.push(`Random Noise SD (t/ha),${s.noiseSd.toFixed(4)}`);
+    }
     rows.push(`Low Yield Probability (%),${(lowYieldProb * 100).toFixed(2)}`);
 
     rows.push('');
@@ -555,6 +566,12 @@ export default function SimulationTab() {
       const pct = (count / totalDays) * 100;
       rows.push(`${key},${count},${pct.toFixed(2)}`);
     });
+
+    rows.push('');
+    rows.push('Typhoon Severity Counts');
+    rows.push('Severity,Days');
+    rows.push(`Moderate,${dailyTyphoonSeverityCounts.Moderate}`);
+    rows.push(`Severe,${dailyTyphoonSeverityCounts.Severe}`);
 
     rows.push('');
     rows.push('Yield Over Cycles');
@@ -596,7 +613,7 @@ export default function SimulationTab() {
     URL.revokeObjectURL(url);
   }, [
     cycleRecords, lowYieldProb, runningMean, runningSd, summary,
-    dailyWeatherCounts, yieldSeries, yieldBandSeries, yieldHistoryOverTime, histogramBins,
+    dailyWeatherCounts, dailyTyphoonSeverityCounts, yieldSeries, yieldBandSeries, yieldHistoryOverTime, histogramBins,
   ]);
 
   const handlePrint = useCallback(() => {
@@ -808,7 +825,6 @@ export default function SimulationTab() {
               ? [
                   { label: 'Cycle', value: `${displayCycle} / ${params.cyclesTarget}` },
                   { label: 'Day', value: `${displayDay} / ${params.daysPerCycle}` },
-                  { label: 'Current Weather', value: currentWeather ?? '---' },
                   { label: 'Current Yield', value: currentYield != null ? formatYieldValue(currentYield) : '---' },
                   { label: 'Running Mean', value: runningMean > 0 ? formatYieldValue(runningMean) : '---' },
                   { label: 'Low Yield Risk', value: `${(lowYieldProb * 100).toFixed(1)}%` },
@@ -816,7 +832,6 @@ export default function SimulationTab() {
               : [
                   { label: 'Cycle', value: `${displayCycle} / ${params.cyclesTarget}` },
                   { label: 'Day', value: `${displayDay} / ${params.daysPerCycle}` },
-                  { label: 'Current Weather', value: currentWeather ?? '---' },
                   { label: 'Current Yield', value: currentYield != null ? `${currentYield.toFixed(2)} t/ha` : '---' },
                   { label: 'Running Mean', value: runningMean > 0 ? `${runningMean.toFixed(2)} t/ha` : '---' },
                   { label: 'Running Mean Sacks', value: runningMean > 0 ? `${formatSacks(runningMean)} sacks` : '---' },
@@ -840,6 +855,7 @@ export default function SimulationTab() {
           timeline={currentCycleWeatherTimeline}
           daysPerCycle={params.daysPerCycle}
           plantingMonth={params.plantingMonth}
+          region={params.region}
           typhoonProbability={params.typhoonProbability}
         />
 
@@ -864,6 +880,7 @@ export default function SimulationTab() {
           <table>
             <tbody>
               <tr><td>Planting Month</td><td>{params.plantingMonth}</td></tr>
+              <tr><td>Region</td><td>{params.region}</td></tr>
               <tr><td>Irrigation</td><td>{params.irrigationType}</td></tr>
               <tr><td>ENSO</td><td>{params.ensoState}</td></tr>
               <tr><td>Typhoon Probability</td><td>{params.typhoonProbability}%</td></tr>
@@ -880,6 +897,8 @@ export default function SimulationTab() {
               <tr><td>Running Mean</td><td>{runningMean > 0 ? formatYieldValue(runningMean) : '---'}</td></tr>
               <tr><td>Low Yield Risk</td><td>{(lowYieldProb * 100).toFixed(1)}%</td></tr>
               <tr><td>Expected Range (P5-P95)</td><td>{summaryNumbers ? formatYieldRange(summaryNumbers.percentile5, summaryNumbers.percentile95) : '---'}</td></tr>
+              <tr><td>Weather Variability SD</td><td>{summaryNumbers ? formatYieldValue(summaryNumbers.deterministicSd) : '---'}</td></tr>
+              <tr><td>Random Noise SD</td><td>{summaryNumbers ? formatYieldValue(summaryNumbers.noiseSd) : '---'}</td></tr>
             </tbody>
           </table>
 
@@ -892,6 +911,10 @@ export default function SimulationTab() {
                   <td>{dailyWeatherCounts[key]} days{weatherPercents ? ` (${weatherPercents[key].toFixed(1)}%)` : ''}</td>
                 </tr>
               ))}
+              <tr>
+                <td>Severe Typhoon Days</td>
+                <td>{dailyTyphoonSeverityCounts.Severe} days</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -905,7 +928,10 @@ export default function SimulationTab() {
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="cycle" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
                   <YAxis fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontFamily: 'Poppins, sans-serif', fontSize: 12 }} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontFamily: 'Poppins, sans-serif', fontSize: 12 }}
+                    formatter={(value: number) => yieldTooltipFormatter(value)}
+                  />
                   <Area dataKey="p5" stackId="range" stroke="none" fill="transparent" isAnimationActive={false} />
                   <Area dataKey="band" stackId="range" stroke="none" fill={BAND_FILL} isAnimationActive={false} />
                   <Line type="monotone" dataKey="yield" stroke={YIELD_COLOR} dot={false} strokeWidth={2} />
@@ -1012,7 +1038,10 @@ export default function SimulationTab() {
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis dataKey="cycle" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
                     <YAxis fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontFamily: 'Poppins, sans-serif', fontSize: 12 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontFamily: 'Poppins, sans-serif', fontSize: 12 }}
+                      formatter={(value: number) => yieldTooltipFormatter(value)}
+                    />
                     <Line type="monotone" dataKey="mean" stroke={MEAN_COLOR} dot={false} strokeWidth={2} />
                   </LineChart>
                 </ResponsiveContainer>

@@ -1,16 +1,18 @@
 import { useState } from 'react';
-import { Wheat, FlaskConical, GitBranch } from 'lucide-react';
+import { Wheat, FlaskConical, GitBranch, Info } from 'lucide-react';
 import SimulationTab from '@/components/SimulationTab';
 import AnalysisTab from '@/components/AnalysisTab';
 import ModelFlowTab from '@/components/ModelFlowTab';
+import AboutTab from '@/components/AboutTab';
 import { useSimulationStore } from '@/store/simulationStore';
 
-type Tab = 'simulation' | 'analysis' | 'model';
+type Tab = 'simulation' | 'analysis' | 'model' | 'about';
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'simulation', label: 'Simulation', icon: <Wheat className="w-4 h-4" /> },
   { id: 'analysis',   label: 'Analysis',   icon: <FlaskConical className="w-4 h-4" /> },
   { id: 'model',      label: 'Model Flow', icon: <GitBranch className="w-4 h-4" /> },
+  { id: 'about',      label: 'About',      icon: <Info className="w-4 h-4" /> },
 ];
 
 const Index = () => {
@@ -22,9 +24,9 @@ const Index = () => {
         {/* Top nav header */}
         <header className="border-b border-border bg-card/80 backdrop-blur sticky top-0 z-30 shadow-sm">
           <div className="container max-w-7xl mx-auto px-4">
-            <div className="flex items-center gap-6 h-16">
+            <div className="flex items-center h-16">
               {/* Brand */}
-              <div className="flex items-center gap-3 shrink-0">
+              <div className="flex items-center gap-3 shrink-0 sm:pr-6 sm:mr-6 sm:border-r sm:border-border/60">
                 <div className="w-9 h-9 rounded-lg bg-card border border-border shadow flex items-center justify-center overflow-hidden">
                   <img
                     src="/LeafGuardLogo.png"
@@ -43,7 +45,7 @@ const Index = () => {
               </div>
 
               {/* Tab navigation */}
-              <nav className="flex items-center gap-1 ml-2">
+              <nav className="flex-1 flex items-center justify-center gap-2">
                 {TABS.map((tab) => (
                   <button
                     key={tab.id}
@@ -61,7 +63,7 @@ const Index = () => {
                 ))}
               </nav>
 
-              <div className="ml-auto flex items-center">
+              <div className="shrink-0 flex items-center">
                 <div className="flex items-center rounded-full border border-border bg-muted p-1">
                   <button
                     onClick={() => setViewMode('farmer')}
@@ -96,6 +98,7 @@ const Index = () => {
         {activeTab === 'simulation' && <SimulationTab />}
         {activeTab === 'analysis'   && <AnalysisTab />}
         {activeTab === 'model'      && <ModelFlowTab />}
+        {activeTab === 'about'      && <AboutTab />}
       </main>
     </div>
   );

@@ -1,9 +1,10 @@
-﻿import { useCallback, useMemo } from 'react';
+﻿import { useCallback, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import ChartLegend from './ChartLegend';
 import { useSimulationStore } from '@/store/simulationStore';
-import { getSeason, IrrigationType, ENSOState, WeatherType } from '@/lib/simulation';
+import { getSeason, getWeatherWeights, getTyphoonSeverityWeights, IrrigationType, ENSOState, WeatherType, Region, TyphoonSeverity } from '@/lib/simulation';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -13,6 +14,11 @@ const BASE_YIELDS: Record<WeatherType, number> = {
   Normal: 3.0,
   Wet: 3.3,
   Typhoon: 1.2,
+};
+
+const TYPHOON_YIELDS: Record<TyphoonSeverity, number> = {
+  Moderate: 1.4,
+  Severe: 0.8,
 };
 
 const IRRIGATION_ADJ: Record<IrrigationType, number> = {
@@ -26,33 +32,25 @@ const ENSO_ADJ: Record<ENSOState, number> = {
   'La Niña': 0.3,
 };
 
-function expectedWeatherWeights(season: ReturnType<typeof getSeason>, typhoonProb: number) {
-  const weights =
-    season === 'Dry Season'
-      ? { Dry: 0.5, Normal: 0.4, Wet: 0.1, Typhoon: 0.05 }
-      : { Dry: 0.1, Normal: 0.4, Wet: 0.35, Typhoon: Math.max(0, typhoonProb) };
-  const total = weights.Dry + weights.Normal + weights.Wet + weights.Typhoon;
-  return {
-    Dry: weights.Dry / total,
-    Normal: weights.Normal / total,
-    Wet: weights.Wet / total,
-    Typhoon: weights.Typhoon / total,
-  };
-}
-
 function expectedYield(params: {
   plantingMonth: number;
   irrigationType: IrrigationType;
   ensoState: ENSOState;
   typhoonProbability: number;
+  region: Region;
 }) {
-  const season = getSeason(params.plantingMonth);
-  const weights = expectedWeatherWeights(season, params.typhoonProbability / 100);
+  const weights = getWeatherWeights(params.plantingMonth, params.typhoonProbability / 100, params.region);
+  const severity = getTyphoonSeverityWeights(params.region);
+  const typhoonExpected =
+    weights.Typhoon * (
+      TYPHOON_YIELDS.Moderate * severity.Moderate +
+      TYPHOON_YIELDS.Severe * severity.Severe
+    );
   const base =
     BASE_YIELDS.Dry * weights.Dry +
     BASE_YIELDS.Normal * weights.Normal +
     BASE_YIELDS.Wet * weights.Wet +
-    BASE_YIELDS.Typhoon * weights.Typhoon;
+    typhoonExpected;
   const adj = IRRIGATION_ADJ[params.irrigationType] + ENSO_ADJ[params.ensoState];
   return Math.max(0, base + adj);
 }
@@ -100,6 +98,7 @@ export default function AnalysisTab() {
       plantingMonth: params.plantingMonth,
       irrigationType: params.irrigationType,
       ensoState: params.ensoState,
+      region: params.region,
     };
     const low = expectedYield({ ...common, typhoonProbability: 5 }) * calibration;
     const mid = expectedYield({ ...common, typhoonProbability: params.typhoonProbability }) * calibration;
@@ -112,6 +111,19 @@ export default function AnalysisTab() {
     }];
   }, [calibration, params]);
   const typhoonNumbers = typhoonData[0];
+
+  const compareOptions = useMemo(() => ([
+    { id: 'dry-rainfed', label: 'Dry Season Rainfed', params: { plantingMonth: 2, irrigationType: 'Rainfed' as IrrigationType, ensoState: 'Neutral' as ENSOState, typhoonProbability: 5, region: params.region } },
+    { id: 'wet-irrigated', label: 'Wet Season Irrigated', params: { plantingMonth: 7, irrigationType: 'Irrigated' as IrrigationType, ensoState: 'Neutral' as ENSOState, typhoonProbability: 15, region: params.region } },
+    { id: 'high-typhoon', label: 'High Typhoon', params: { typhoonProbability: 35 } },
+    { id: 'la-nina', label: 'La Niña Boost', params: { ensoState: 'La Niña' as ENSOState } },
+    { id: 'el-nino', label: 'El Niño Stress', params: { ensoState: 'El Niño' as ENSOState } },
+  ]), [params.region]);
+
+  const [compareKey, setCompareKey] = useState(compareOptions[0]?.id ?? 'dry-rainfed');
+  const comparePreset = compareOptions.find((p) => p.id === compareKey) ?? compareOptions[0];
+  const compareParams = { ...params, ...(comparePreset?.params ?? {}) };
+  const compareExpected = expectedYield(compareParams) * calibration;
 
   const interpretation = useMemo(() => {
     const riskPct = (lowYieldProb * 100).toFixed(1);
@@ -205,8 +217,9 @@ export default function AnalysisTab() {
     rows.push('Metric,Value');
     rows.push(`Baseline Yield (t/ha),${baseline.toFixed(4)}`);
     rows.push(`Low Yield Risk (%),${(lowYieldProb * 100).toFixed(2)}`);
-    rows.push(`Season,${getSeason(params.plantingMonth)}`);
+    rows.push(`Season,${getSeason(params.plantingMonth, params.region)}`);
     rows.push(`Planting Month,${params.plantingMonth}`);
+    rows.push(`Region,${params.region}`);
     rows.push(`Irrigation Type,${params.irrigationType}`);
     rows.push(`ENSO State,${params.ensoState}`);
     rows.push(`Typhoon Probability (%),${params.typhoonProbability.toFixed(1)}`);
@@ -244,6 +257,13 @@ export default function AnalysisTab() {
       rows.push(`Mean (t/ha),${mcRange.mean.toFixed(4)}`);
     }
 
+    rows.push('');
+    rows.push('Scenario Compare');
+    rows.push('Scenario,Yield (t/ha)');
+    rows.push(`Current,${baseline.toFixed(4)}`);
+    rows.push(`${comparePreset?.label ?? 'Preset'},${compareExpected.toFixed(4)}`);
+    rows.push(`Delta,${(compareExpected - baseline).toFixed(4)}`);
+
     const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -254,6 +274,7 @@ export default function AnalysisTab() {
     URL.revokeObjectURL(url);
   }, [
     baseline, lowYieldProb, params, irrigationNumbers, ensoNumbers, typhoonNumbers, mcTotals, mcRange,
+    compareExpected, comparePreset,
   ]);
 
   return (
@@ -279,7 +300,8 @@ export default function AnalysisTab() {
         <CardContent className="text-sm text-muted-foreground space-y-2" style={{ fontFamily: "'Poppins', sans-serif" }}>
           <div>Baseline Yield: <strong>{formatYieldValue(baseline)}</strong></div>
           <div>Low-Yield Risk: <strong>{(lowYieldProb * 100).toFixed(1)}%</strong></div>
-          <div>Season: <strong>{getSeason(params.plantingMonth)}</strong> (Planting Month {params.plantingMonth})</div>
+          <div>Season: <strong>{getSeason(params.plantingMonth, params.region)}</strong> (Planting Month {params.plantingMonth})</div>
+          <div>Region: <strong>{params.region}</strong></div>
         </CardContent>
       </Card>
 
@@ -330,6 +352,33 @@ export default function AnalysisTab() {
           </div>
           <div className="text-xs text-muted-foreground">
             Based on {mcTotals.total} completed cycles from the live simulation.
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border">
+        <CardHeader>
+          <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Scenario Compare</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3" style={{ fontFamily: "'Poppins', sans-serif" }}>
+          <div className="text-sm text-muted-foreground">
+            Compare the current run against a preset scenario (no separate simulation is run).
+          </div>
+          <Select value={comparePreset?.id ?? compareKey} onValueChange={setCompareKey}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {compareOptions.map((opt) => (
+                <SelectItem key={opt.id} value={opt.id} style={{ fontFamily: "'Poppins', sans-serif" }}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="grid grid-cols-2 gap-2 text-sm text-muted-foreground">
+            <div>Current: <strong>{formatYieldValue(baseline)}</strong></div>
+            <div>{comparePreset?.label ?? 'Preset'}: <strong>{formatYieldValue(compareExpected)}</strong></div>
+            <div>Delta: <strong>{formatYieldValue(compareExpected - baseline)}</strong></div>
+            <div>Region: <strong>{compareParams.region}</strong></div>
           </div>
         </CardContent>
       </Card>

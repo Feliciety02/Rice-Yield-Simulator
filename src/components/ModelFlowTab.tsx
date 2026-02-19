@@ -2,22 +2,23 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 const steps = [
   { id: 1, label: 'Create Crop Cycle', shape: 'rounded', desc: 'Initialize a new 120-day crop cycle' },
-  { id: 2, label: 'Assign Crop Parameters', shape: 'rect', desc: 'Set irrigation type, ENSO state, planting month' },
-  { id: 3, label: 'Decide Season', shape: 'diamond', desc: 'June–October → Wet; otherwise → Dry' },
-  { id: 4, label: 'Assign Weather State', shape: 'rect', desc: 'Sample from season-specific probability distribution' },
+  { id: 2, label: 'Assign Crop Parameters', shape: 'rect', desc: 'Set region, irrigation, ENSO, planting month' },
+  { id: 3, label: 'Blend Season', shape: 'diamond', desc: 'Dry / Wet / Transition based on month and region' },
+  { id: 4, label: 'Assign Weather State', shape: 'rect', desc: 'Sample from normalized seasonal probabilities' },
   { id: 5, label: 'Process Growing Period', shape: 'rect', desc: 'Simulate 120-day growth phase' },
   { id: 6, label: 'Decide Weather Type', shape: 'diamond', desc: 'Dry / Normal / Wet / Typhoon' },
-  { id: 7, label: 'Assign Yield', shape: 'rect', desc: 'Base yield + irrigation + ENSO adjustments' },
-  { id: 8, label: 'Add Noise', shape: 'rect', desc: 'Apply Normal(0, 0.2) random variation' },
-  { id: 9, label: 'Record Yield', shape: 'rounded', desc: 'Store final yield, ensure ≥ 0' },
-  { id: 10, label: 'Decide Low Yield', shape: 'diamond', desc: 'Check if yield < 2.0 t/ha' },
-  { id: 11, label: 'Record Low Yield', shape: 'rounded', desc: 'Flag cycle as crop failure' },
-  { id: 12, label: 'Dispose', shape: 'rect', desc: 'End cycle, aggregate statistics' },
+  { id: 7, label: 'If Typhoon, Set Severity', shape: 'diamond', desc: 'Moderate or Severe based on region' },
+  { id: 8, label: 'Assign Yield', shape: 'rect', desc: 'Base yield + irrigation + ENSO + severity' },
+  { id: 9, label: 'Add Noise', shape: 'rect', desc: 'Apply Normal(0, 0.2) random variation' },
+  { id: 10, label: 'Record Yield', shape: 'rounded', desc: 'Store final yield, ensure >= 0' },
+  { id: 11, label: 'Decide Low Yield', shape: 'diamond', desc: 'Check if yield < 2.0 t/ha' },
+  { id: 12, label: 'Record Low Yield', shape: 'rounded', desc: 'Flag cycle as crop failure' },
+  { id: 13, label: 'Dispose', shape: 'rect', desc: 'End cycle, aggregate statistics' },
 ];
 
-function ShapeBox({ shape, label, active }: { shape: string; label: string; active?: boolean }) {
+function ShapeBox({ shape, label }: { shape: string; label: string; active?: boolean }) {
   const base = 'px-4 py-2.5 text-sm font-medium text-center border-2 transition-all min-w-[180px]';
-  
+
   if (shape === 'diamond') {
     return (
       <div className="flex justify-center">
@@ -37,7 +38,7 @@ function ShapeBox({ shape, label, active }: { shape: string; label: string; acti
       </div>
     );
   }
-  
+
   if (shape === 'rounded') {
     return (
       <div className={`${base} rounded-full border-accent bg-accent/10 text-foreground`}>
