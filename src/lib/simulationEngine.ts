@@ -1,14 +1,15 @@
-import { getSeason, getWeather, WeatherType, IrrigationType, ENSOState } from './simulation';
+import { getSeason, getWeather, WeatherType, IrrigationType, ENSOState, Season } from './simulation';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type SimStatus = 'idle' | 'running' | 'paused' | 'finished';
+export type SimMode = 'day' | 'cycle';
 
 export interface EngineParams {
-  plantingMonth: number;       // 1–12
+  plantingMonth: number;       // 1-12
   irrigationType: IrrigationType;
   ensoState: ENSOState;
-  typhoonProbability: number;  // 0–40 (%)
+  typhoonProbability: number;  // 0-40 (%)
   cyclesTarget: number;
   daysPerCycle: number;        // default 120
 }
@@ -18,8 +19,21 @@ export interface HistogramBin {
   count: number;
 }
 
+export interface CycleRecord {
+  cycleIndex: number;
+  yieldTons: number;
+  yieldSacks: number;
+  season: Season;
+  weather: WeatherType;
+  ensoState: ENSOState;
+  irrigationType: IrrigationType;
+  plantingMonth: number;
+  typhoonProbability: number;
+}
+
 export interface EngineSnapshot {
   status: SimStatus;
+  mode: SimMode;
   speedMultiplier: number;
   params: EngineParams;
   pendingParams: Partial<EngineParams>;
@@ -27,12 +41,13 @@ export interface EngineSnapshot {
   // runtime
   currentCycleIndex: number;
   currentDay: number;
-  dayProgress: number;   // 0–1 within cycle
-  runProgress: number;   // 0–1 across all cycles
+  dayProgress: number;   // 0-1 within cycle
+  runProgress: number;   // 0-1 across all cycles
 
   // derived live
   currentWeather: WeatherType | null;
   currentYield: number | null;
+  currentCycleWeatherTimeline: WeatherType[];
 
   // running stats (Welford)
   runningMean: number;
@@ -42,14 +57,18 @@ export interface EngineSnapshot {
   // history arrays (throttled)
   yieldHistoryOverTime: number[];     // mean yield up to each cycle
   recentYields: number[];             // last 60 raw yields
+  yieldSeries: { cycle: number; yield: number }[];
+  yieldBandSeries: { cycle: number; mean: number; p5: number; p95: number }[];
+  cycleRecords: CycleRecord[];
 
   // weather counts
   weatherCounts: Record<WeatherType, number>;
+  dailyWeatherCounts: Record<WeatherType, number>;
 
   // histogram bins
   histogramBins: HistogramBin[];
 
-  // summary (computed on finish or on demand)
+  // summary (cached on cycle completion)
   summary: {
     mean: number; std: number; min: number; max: number;
     percentile5: number; percentile95: number;
@@ -63,6 +82,7 @@ type Listener = (snap: EngineSnapshot) => void;
 
 const BINS_STEP = 0.5;
 const BINS_MAX = 5.5;
+const MAX_SERIES = 400;
 
 function initBins(): HistogramBin[] {
   const bins: HistogramBin[] = [];
@@ -105,9 +125,11 @@ class SimulationEngine {
   private rafId: number | null = null;
   private lastTime: number | null = null;
   private accumulatedMs = 0;
+  private cycleElapsedMs = 0;
 
   // live state
   private status: SimStatus = 'idle';
+  private mode: SimMode = 'day';
   private speedMultiplier = 1;
 
   private params: EngineParams = {
@@ -125,6 +147,8 @@ class SimulationEngine {
   private currentDay = 0;
   private currentWeather: WeatherType | null = null;
   private currentYield: number | null = null;
+  private currentCycleWeatherTimeline: WeatherType[] = [];
+  private cycleWeatherSequence: WeatherType[] = [];
 
   // Welford running stats
   private welfordCount = 0;
@@ -138,12 +162,18 @@ class SimulationEngine {
   private yieldHistoryOverTime: number[] = [];
   private recentYields: number[] = [];
   private allYields: number[] = [];
+  private yieldSeries: { cycle: number; yield: number }[] = [];
+  private yieldBandSeries: { cycle: number; mean: number; p5: number; p95: number }[] = [];
+  private cycleRecords: CycleRecord[] = [];
 
   // weather counts
   private weatherCounts: Record<WeatherType, number> = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+  private dailyWeatherCounts: Record<WeatherType, number> = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
 
   // histogram
   private histogramBins: HistogramBin[] = initBins();
+
+  private summaryCache: EngineSnapshot['summary'] = null;
 
   // per-cycle weather (accumulated over days)
   private cycleWeatherAccum: Record<WeatherType, number> = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
@@ -165,10 +195,23 @@ class SimulationEngine {
   }
 
   start() {
+    this.mode = 'day';
     this.resetInternals();
     this.status = 'running';
     this.lastTime = null;
     this.accumulatedMs = 0;
+    this.loop();
+    this.emit(true);
+  }
+
+  startInstant() {
+    this.mode = 'cycle';
+    this.resetInternals();
+    this.status = 'running';
+    this.lastTime = null;
+    this.accumulatedMs = 0;
+    this.cycleElapsedMs = 0;
+    this.prepareCycle();
     this.loop();
     this.emit(true);
   }
@@ -198,7 +241,7 @@ class SimulationEngine {
   }
 
   setSpeed(multiplier: number) {
-    this.speedMultiplier = Math.max(0.1, multiplier);
+    this.speedMultiplier = Math.max(0.5, multiplier);
     this.emit(true);
   }
 
@@ -209,8 +252,12 @@ class SimulationEngine {
     if (typhoonProbability !== undefined) {
       this.params = { ...this.params, typhoonProbability };
     }
-    // Defer the rest to next cycle
-    if (Object.keys(rest).length > 0) {
+    const isActive = this.status === 'running' || this.status === 'paused';
+    if (!isActive) {
+      this.params = { ...this.params, ...rest };
+      this.pendingParams = {};
+    } else if (Object.keys(rest).length > 0) {
+      // Defer the rest to next cycle
       this.pendingParams = { ...this.pendingParams, ...rest };
     }
     this.emit(true);
@@ -223,6 +270,8 @@ class SimulationEngine {
     this.currentDay = 0;
     this.currentWeather = null;
     this.currentYield = null;
+    this.currentCycleWeatherTimeline = [];
+    this.cycleWeatherSequence = [];
     this.welfordCount = 0;
     this.welfordMean = 0;
     this.welfordM2 = 0;
@@ -232,10 +281,16 @@ class SimulationEngine {
     this.yieldHistoryOverTime = [];
     this.recentYields = [];
     this.allYields = [];
+    this.yieldSeries = [];
+    this.yieldBandSeries = [];
+    this.cycleRecords = [];
+    this.summaryCache = null;
     this.weatherCounts = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+    this.dailyWeatherCounts = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
     this.histogramBins = initBins();
     this.cycleWeatherAccum = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
     this.accumulatedMs = 0;
+    this.cycleElapsedMs = 0;
     // commit pending
     this.params = { ...this.params, ...this.pendingParams };
     this.pendingParams = {};
@@ -248,13 +303,17 @@ class SimulationEngine {
       const delta = this.lastTime === null ? 16 : now - this.lastTime;
       this.lastTime = now;
 
-      // ms needed to advance one day: base is 1000ms/day at 1x
-      const msPerDay = 1000 / this.speedMultiplier;
-      this.accumulatedMs += delta;
+      if (this.mode === 'day') {
+        // ms needed to advance one day: base is 1000ms/day at 1x
+        const msPerDay = 1000 / this.speedMultiplier;
+        this.accumulatedMs += delta;
 
-      while (this.accumulatedMs >= msPerDay && this.status === 'running') {
-        this.accumulatedMs -= msPerDay;
-        this.tick();
+        while (this.accumulatedMs >= msPerDay && this.status === 'running') {
+          this.accumulatedMs -= msPerDay;
+          this.tickDay();
+        }
+      } else {
+        this.tickCycle(delta);
       }
 
       const now2 = performance.now();
@@ -267,7 +326,7 @@ class SimulationEngine {
     });
   };
 
-  private tick() {
+  private tickDay() {
     if (this.currentCycleIndex >= this.params.cyclesTarget) {
       this.finish();
       return;
@@ -279,40 +338,54 @@ class SimulationEngine {
     this.currentDay++;
     this.currentWeather = weather;
     this.cycleWeatherAccum[weather]++;
+    this.dailyWeatherCounts[weather]++;
+    this.currentCycleWeatherTimeline.push(weather);
+    if (this.currentCycleWeatherTimeline.length > this.params.daysPerCycle) {
+      this.currentCycleWeatherTimeline.shift();
+    }
 
     if (this.currentDay >= this.params.daysPerCycle) {
-      // Finalize cycle
       const dominantWeather = this.getDominantWeather();
-      const yld = computeYield(dominantWeather, this.params);
-      this.currentYield = yld;
+      this.finalizeCycle(season, dominantWeather);
+    }
+  }
 
-      // Update weather counts
-      this.weatherCounts[dominantWeather]++;
+  private tickCycle(deltaMs: number) {
+    if (this.currentCycleIndex >= this.params.cyclesTarget) {
+      this.finish();
+      return;
+    }
 
-      // Welford update
-      this.welfordCount++;
-      const delta = yld - this.welfordMean;
-      this.welfordMean += delta / this.welfordCount;
-      const delta2 = yld - this.welfordMean;
-      this.welfordM2 += delta * delta2;
+    if (this.cycleWeatherSequence.length === 0) {
+      this.prepareCycle();
+    }
 
-      if (yld < 2.0) this.lowYieldCount++;
-      if (yld < this.minYield) this.minYield = yld;
-      if (yld > this.maxYield) this.maxYield = yld;
+    const cycleMs = this.cycleDurationMs();
+    this.cycleElapsedMs += deltaMs;
 
-      this.allYields.push(yld);
-      addToBin(this.histogramBins, yld);
+    while (this.cycleElapsedMs >= cycleMs && this.status === 'running') {
+      this.currentDay = this.params.daysPerCycle;
+      this.currentCycleWeatherTimeline = [...this.cycleWeatherSequence];
+      const dominantWeather = this.getDominantWeather();
+      const season = getSeason(this.params.plantingMonth);
+      this.finalizeCycle(season, dominantWeather);
 
-      this.yieldHistoryOverTime.push(this.welfordMean);
-      this.recentYields = [...this.recentYields.slice(-59), yld];
+      if (this.currentCycleIndex >= this.params.cyclesTarget) {
+        this.finish();
+        return;
+      }
 
-      // Commit pending params on cycle rollover
-      this.params = { ...this.params, ...this.pendingParams };
-      this.pendingParams = {};
+      this.cycleElapsedMs -= cycleMs;
+      this.prepareCycle();
+    }
 
-      this.currentCycleIndex++;
-      this.currentDay = 0;
-      this.cycleWeatherAccum = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+    const progress = Math.min(1, this.cycleElapsedMs / cycleMs);
+    const dayIndex = Math.min(this.params.daysPerCycle, Math.floor(progress * this.params.daysPerCycle));
+    if (dayIndex !== this.currentDay) {
+      this.currentDay = dayIndex;
+      const idx = Math.max(0, dayIndex - 1);
+      this.currentWeather = this.cycleWeatherSequence[idx] ?? this.currentWeather;
+      this.currentCycleWeatherTimeline = this.cycleWeatherSequence.slice(0, dayIndex);
     }
   }
 
@@ -323,10 +396,94 @@ class SimulationEngine {
     );
   }
 
+  private cycleDurationMs() {
+    const base = 300;
+    const adjusted = base / this.speedMultiplier;
+    return Math.min(500, Math.max(200, adjusted));
+  }
+
+  private prepareCycle() {
+    const season = getSeason(this.params.plantingMonth);
+    const tProb = this.params.typhoonProbability / 100;
+    this.cycleWeatherSequence = [];
+    this.cycleWeatherAccum = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+    for (let d = 0; d < this.params.daysPerCycle; d++) {
+      const w = getWeather(season, tProb);
+      this.cycleWeatherSequence.push(w);
+      this.cycleWeatherAccum[w]++;
+    }
+    this.currentDay = 0;
+    this.currentWeather = this.cycleWeatherSequence[0] ?? null;
+    this.currentCycleWeatherTimeline = [];
+  }
+
+  private finalizeCycle(season: Season, dominantWeather: WeatherType) {
+    const yld = computeYield(dominantWeather, this.params);
+    this.currentYield = yld;
+
+    this.weatherCounts[dominantWeather]++;
+    if (this.mode === 'cycle') {
+      (Object.keys(this.cycleWeatherAccum) as WeatherType[]).forEach((key) => {
+        this.dailyWeatherCounts[key] += this.cycleWeatherAccum[key];
+      });
+    }
+
+    this.welfordCount++;
+    const delta = yld - this.welfordMean;
+    this.welfordMean += delta / this.welfordCount;
+    const delta2 = yld - this.welfordMean;
+    this.welfordM2 += delta * delta2;
+
+    if (yld < 2.0) this.lowYieldCount++;
+    if (yld < this.minYield) this.minYield = yld;
+    if (yld > this.maxYield) this.maxYield = yld;
+
+    this.allYields.push(yld);
+    addToBin(this.histogramBins, yld);
+
+    this.yieldHistoryOverTime = [...this.yieldHistoryOverTime, this.welfordMean].slice(-MAX_SERIES);
+    this.yieldSeries = [...this.yieldSeries, { cycle: this.currentCycleIndex + 1, yield: yld }].slice(-MAX_SERIES);
+    this.recentYields = [...this.recentYields.slice(-59), yld];
+
+    const cycleRecord: CycleRecord = {
+      cycleIndex: this.currentCycleIndex + 1,
+      yieldTons: yld,
+      yieldSacks: yld * 20,
+      season,
+      weather: dominantWeather,
+      ensoState: this.params.ensoState,
+      irrigationType: this.params.irrigationType,
+      plantingMonth: this.params.plantingMonth,
+      typhoonProbability: this.params.typhoonProbability,
+    };
+    this.cycleRecords = [...this.cycleRecords, cycleRecord];
+    this.summaryCache = this.computeSummary();
+    if (this.summaryCache) {
+      const { mean, percentile5, percentile95 } = this.summaryCache;
+      this.yieldBandSeries = [...this.yieldBandSeries, {
+        cycle: this.currentCycleIndex + 1,
+        mean,
+        p5: percentile5,
+        p95: percentile95,
+      }].slice(-MAX_SERIES);
+    }
+
+    // Commit pending params on cycle rollover
+    this.params = { ...this.params, ...this.pendingParams };
+    this.pendingParams = {};
+
+    this.currentCycleIndex++;
+    this.currentDay = 0;
+    this.cycleWeatherAccum = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+    this.currentCycleWeatherTimeline = [];
+    this.cycleWeatherSequence = [];
+  }
+
   private finish() {
     this.status = 'finished';
     if (this.rafId !== null) cancelAnimationFrame(this.rafId);
     this.rafId = null;
+    this.summaryCache = this.computeSummary();
     this.emit(true);
   }
 
@@ -358,6 +515,7 @@ class SimulationEngine {
     const n = this.welfordCount;
     return {
       status: this.status,
+      mode: this.mode,
       speedMultiplier: this.speedMultiplier,
       params: { ...this.params },
       pendingParams: { ...this.pendingParams },
@@ -369,6 +527,7 @@ class SimulationEngine {
 
       currentWeather: this.currentWeather,
       currentYield: this.currentYield,
+      currentCycleWeatherTimeline: [...this.currentCycleWeatherTimeline],
 
       runningMean: this.welfordMean,
       runningSd: this.welfordSd(),
@@ -376,11 +535,15 @@ class SimulationEngine {
 
       yieldHistoryOverTime: [...this.yieldHistoryOverTime],
       recentYields: [...this.recentYields],
+      yieldSeries: this.yieldSeries.map((p) => ({ ...p })),
+      yieldBandSeries: this.yieldBandSeries.map((p) => ({ ...p })),
+      cycleRecords: this.cycleRecords.map((r) => ({ ...r })),
 
       weatherCounts: { ...this.weatherCounts },
+      dailyWeatherCounts: { ...this.dailyWeatherCounts },
       histogramBins: this.histogramBins.map(b => ({ ...b })),
 
-      summary: this.computeSummary(),
+      summary: this.summaryCache,
     };
   }
 

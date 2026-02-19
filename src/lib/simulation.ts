@@ -46,18 +46,20 @@ function normalRandom(mean: number, stdDev: number): number {
 }
 
 export function getWeather(season: Season, typhoonProb: number): WeatherType {
-  const r = Math.random();
-  if (season === 'Dry Season') {
-    if (r < 0.05) return 'Typhoon';
-    if (r < 0.15) return 'Wet';
-    if (r < 0.55) return 'Normal';
-    return 'Dry';
-  } else {
-    if (r < typhoonProb) return 'Typhoon';
-    if (r < typhoonProb + 0.35) return 'Wet';
-    if (r < typhoonProb + 0.75) return 'Normal';
-    return 'Dry';
-  }
+  const weights =
+    season === 'Dry Season'
+      ? { Dry: 0.5, Normal: 0.4, Wet: 0.1, Typhoon: 0.05 }
+      : { Dry: 0.1, Normal: 0.4, Wet: 0.35, Typhoon: Math.max(0, typhoonProb) };
+
+  const total = weights.Dry + weights.Normal + weights.Wet + weights.Typhoon;
+  const r = Math.random() * total;
+  let acc = weights.Dry;
+  if (r < acc) return 'Dry';
+  acc += weights.Normal;
+  if (r < acc) return 'Normal';
+  acc += weights.Wet;
+  if (r < acc) return 'Wet';
+  return 'Typhoon';
 }
 
 const BASE_YIELDS: Record<WeatherType, number> = {

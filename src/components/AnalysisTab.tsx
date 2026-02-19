@@ -1,142 +1,335 @@
-import { useMemo } from 'react';
+﻿import { useCallback, useMemo } from 'react';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { runSimulation } from '@/lib/simulation';
-import { useSimulation } from '@/context/SimulationContext';
+import ChartLegend from './ChartLegend';
+import { useSimulationStore } from '@/store/simulationStore';
+import { getSeason, IrrigationType, ENSOState, WeatherType } from '@/lib/simulation';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
-const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const TYPHOON_LEVELS = [0, 5, 10, 15, 20, 25, 30, 35, 40];
+const BASE_YIELDS: Record<WeatherType, number> = {
+  Dry: 2.0,
+  Normal: 3.0,
+  Wet: 3.3,
+  Typhoon: 1.2,
+};
 
-function getHeatColor(value: number): string {
-  const pct = value * 100;
-  if (pct < 5) return 'hsl(var(--primary))';
-  if (pct < 10) return 'hsl(142 50% 45%)';
-  if (pct < 15) return 'hsl(80 50% 50%)';
-  if (pct < 25) return 'hsl(45 80% 50%)';
-  if (pct < 35) return 'hsl(25 80% 50%)';
-  return 'hsl(var(--destructive))';
+const IRRIGATION_ADJ: Record<IrrigationType, number> = {
+  Irrigated: 0.3,
+  Rainfed: 0,
+};
+
+const ENSO_ADJ: Record<ENSOState, number> = {
+  'El Niño': -0.4,
+  Neutral: 0,
+  'La Niña': 0.3,
+};
+
+function expectedWeatherWeights(season: ReturnType<typeof getSeason>, typhoonProb: number) {
+  const weights =
+    season === 'Dry Season'
+      ? { Dry: 0.5, Normal: 0.4, Wet: 0.1, Typhoon: 0.05 }
+      : { Dry: 0.1, Normal: 0.4, Wet: 0.35, Typhoon: Math.max(0, typhoonProb) };
+  const total = weights.Dry + weights.Normal + weights.Wet + weights.Typhoon;
+  return {
+    Dry: weights.Dry / total,
+    Normal: weights.Normal / total,
+    Wet: weights.Wet / total,
+    Typhoon: weights.Typhoon / total,
+  };
+}
+
+function expectedYield(params: {
+  plantingMonth: number;
+  irrigationType: IrrigationType;
+  ensoState: ENSOState;
+  typhoonProbability: number;
+}) {
+  const season = getSeason(params.plantingMonth);
+  const weights = expectedWeatherWeights(season, params.typhoonProbability / 100);
+  const base =
+    BASE_YIELDS.Dry * weights.Dry +
+    BASE_YIELDS.Normal * weights.Normal +
+    BASE_YIELDS.Wet * weights.Wet +
+    BASE_YIELDS.Typhoon * weights.Typhoon;
+  const adj = IRRIGATION_ADJ[params.irrigationType] + ENSO_ADJ[params.ensoState];
+  return Math.max(0, base + adj);
 }
 
 export default function AnalysisTab() {
-  const { snap } = useSimulation();
-  const { params: liveParams } = snap;
+  const { snap, viewMode } = useSimulationStore();
+  const { params, runningMean, lowYieldProb, summary, cycleRecords } = snap;
+  const isFarmer = viewMode === 'farmer';
 
-  // Use live params as base for scenario comparisons
-  const baseParams = useMemo(() => ({
-    plantingMonth: liveParams.plantingMonth,
-    irrigationType: liveParams.irrigationType,
-    ensoState: liveParams.ensoState,
-    typhoonProbability: liveParams.typhoonProbability,
-    numCycles: 1000,
-  }), [liveParams.plantingMonth, liveParams.irrigationType, liveParams.ensoState, liveParams.typhoonProbability]);
+  const modelBaseline = useMemo(() => expectedYield(params), [params]);
+  const baseline = runningMean > 0 ? runningMean : modelBaseline;
+  const calibration = modelBaseline > 0 ? baseline / modelBaseline : 1;
+  const formatYieldValue = (value: number) =>
+    isFarmer ? `${Math.round(value * 20)} sacks` : `${value.toFixed(2)} t/ha`;
+  const formatYieldRange = (low: number, high: number) =>
+    isFarmer
+      ? `${Math.round(low * 20)} to ${Math.round(high * 20)} sacks`
+      : `${low.toFixed(2)} to ${high.toFixed(2)} t/ha`;
 
-  const analysis = useMemo(() => {
-    const p = baseParams;
-    return {
-      irrigated: runSimulation({ ...p, irrigationType: 'Irrigated' }),
-      rainfed: runSimulation({ ...p, irrigationType: 'Rainfed' }),
-      elNino: runSimulation({ ...p, ensoState: 'El Niño' }),
-      neutral: runSimulation({ ...p, ensoState: 'Neutral' }),
-      laNina: runSimulation({ ...p, ensoState: 'La Niña' }),
-      lowTyphoon: runSimulation({ ...p, typhoonProbability: 5 }),
-      highTyphoon: runSimulation({ ...p, typhoonProbability: 35 }),
+  const irrigationData = useMemo(() => {
+    const currentAdj = IRRIGATION_ADJ[params.irrigationType];
+    const irrigated = baseline + (IRRIGATION_ADJ.Irrigated - currentAdj);
+    const rainfed = baseline + (IRRIGATION_ADJ.Rainfed - currentAdj);
+    return [{
+      category: 'Yield (t/ha)',
+      Irrigated: Number(irrigated.toFixed(2)),
+      Rainfed: Number(rainfed.toFixed(2)),
+    }];
+  }, [baseline, params.irrigationType]);
+  const irrigationNumbers = irrigationData[0];
+
+  const ensoData = useMemo(() => {
+    const currentAdj = ENSO_ADJ[params.ensoState];
+    return [{
+      category: 'Yield (t/ha)',
+      'El Niño': Number((baseline + (ENSO_ADJ['El Niño'] - currentAdj)).toFixed(2)),
+      Neutral: Number((baseline + (ENSO_ADJ.Neutral - currentAdj)).toFixed(2)),
+      'La Niña': Number((baseline + (ENSO_ADJ['La Niña'] - currentAdj)).toFixed(2)),
+    }];
+  }, [baseline, params.ensoState]);
+  const ensoNumbers = ensoData[0];
+
+  const typhoonData = useMemo(() => {
+    const common = {
+      plantingMonth: params.plantingMonth,
+      irrigationType: params.irrigationType,
+      ensoState: params.ensoState,
     };
-  }, [baseParams]);
+    const low = expectedYield({ ...common, typhoonProbability: 5 }) * calibration;
+    const mid = expectedYield({ ...common, typhoonProbability: params.typhoonProbability }) * calibration;
+    const high = expectedYield({ ...common, typhoonProbability: 35 }) * calibration;
+    return [{
+      category: 'Yield (t/ha)',
+      'Low (5%)': Number(low.toFixed(2)),
+      'Mid (current)': Number(mid.toFixed(2)),
+      'High (35%)': Number(high.toFixed(2)),
+    }];
+  }, [calibration, params]);
+  const typhoonNumbers = typhoonData[0];
 
-  const heatmapData = useMemo(() => {
-    const data: { month: number; monthLabel: string; typhoon: number; meanYield: number; lowRisk: number }[] = [];
-    for (const month of Array.from({ length: 12 }, (_, i) => i + 1)) {
-      for (const typhoon of TYPHOON_LEVELS) {
-        const res = runSimulation({
-          ...baseParams,
-          plantingMonth: month,
-          typhoonProbability: typhoon,
-          numCycles: 500,
-        });
-        data.push({ month, monthLabel: MONTH_NAMES_SHORT[month - 1], typhoon, meanYield: res.meanYield, lowRisk: res.lowYieldProbability });
-      }
+  const interpretation = useMemo(() => {
+    const riskPct = (lowYieldProb * 100).toFixed(1);
+    const riskBand = lowYieldProb > 0.30 ? 'High' : lowYieldProb > 0.15 ? 'Moderate' : 'Low';
+    return {
+      headline: `Risk Band: ${riskBand} (${riskPct}%)`,
+      note: 'All values below are calibrated estimates anchored to the live run, using model deltas for irrigation, ENSO, and typhoon sensitivity. No separate simulations were launched here.',
+      takeaways: [
+        `Irrigation shifts yield by about 0.3 t/ha (around 6 sacks) compared to rainfed conditions.`,
+        `ENSO state changes yield by -0.4 to +0.3 t/ha across scenarios.`,
+        `Typhoon probability has the strongest sensitivity. Higher storm rates reduce expected yield the most.`,
+      ],
+    };
+  }, [lowYieldProb]);
+
+  const mcTotals = useMemo(() => {
+    const total = cycleRecords.length;
+    if (total === 0) {
+      return { total, low: 0, mid: 0, high: 0 };
     }
-    return data;
-  }, [baseParams]);
+    let low = 0;
+    let mid = 0;
+    let high = 0;
+    cycleRecords.forEach((r) => {
+      if (r.yieldTons < 2.0) low++;
+      else if (r.yieldTons <= 3.0) mid++;
+      else high++;
+    });
+    return { total, low, mid, high };
+  }, [cycleRecords]);
 
-  const irrigationData = [{ category: 'Mean Yield', Irrigated: +analysis.irrigated.meanYield.toFixed(2), Rainfed: +analysis.rainfed.meanYield.toFixed(2) }];
-  const ensoData = [{ category: 'Mean Yield (t/ha)', 'El Niño': +analysis.elNino.meanYield.toFixed(2), Neutral: +analysis.neutral.meanYield.toFixed(2), 'La Niña': +analysis.laNina.meanYield.toFixed(2) }];
-  const typhoonData = [{ category: 'Mean Yield', 'Low (5%)': +analysis.lowTyphoon.meanYield.toFixed(2), 'High (35%)': +analysis.highTyphoon.meanYield.toFixed(2) }];
-  const riskData = [
-    { scenario: 'Irrigated',    risk: +(analysis.irrigated.lowYieldProbability * 100).toFixed(1) },
-    { scenario: 'Rainfed',      risk: +(analysis.rainfed.lowYieldProbability * 100).toFixed(1) },
-    { scenario: 'El Niño',      risk: +(analysis.elNino.lowYieldProbability * 100).toFixed(1) },
-    { scenario: 'Neutral',      risk: +(analysis.neutral.lowYieldProbability * 100).toFixed(1) },
-    { scenario: 'La Niña',      risk: +(analysis.laNina.lowYieldProbability * 100).toFixed(1) },
-    { scenario: 'Low Typhoon',  risk: +(analysis.lowTyphoon.lowYieldProbability * 100).toFixed(1) },
-    { scenario: 'High Typhoon', risk: +(analysis.highTyphoon.lowYieldProbability * 100).toFixed(1) },
-  ];
+  const mcPercents = useMemo(() => {
+    if (mcTotals.total === 0) return null;
+    return {
+      low: (mcTotals.low / mcTotals.total) * 100,
+      mid: (mcTotals.mid / mcTotals.total) * 100,
+      high: (mcTotals.high / mcTotals.total) * 100,
+    };
+  }, [mcTotals]);
+
+  const mcLabels = isFarmer
+    ? {
+        low: 'Low (<40 sacks)',
+        mid: 'Moderate (40-60 sacks)',
+        high: 'High (>60 sacks)',
+      }
+    : {
+        low: 'Low (<2.0 t/ha)',
+        mid: 'Moderate (2.0-3.0 t/ha)',
+        high: 'High (>3.0 t/ha)',
+      };
+
+  const mcData = useMemo(() => {
+    const { total, low, mid, high } = mcTotals;
+    if (total === 0) {
+      return [{ name: 'Chance', Low: 0, Moderate: 0, High: 0 }];
+    }
+    const toPct = (v: number) => Number(((v / total) * 100).toFixed(1));
+    return [{
+      name: 'Chance',
+      Low: toPct(low),
+      Moderate: toPct(mid),
+      High: toPct(high),
+    }];
+  }, [mcTotals]);
+
+  const mcRange = useMemo(() => {
+    if (summary) {
+      return {
+        p5: summary.percentile5,
+        p95: summary.percentile95,
+        mean: summary.mean,
+      };
+    }
+    if (cycleRecords.length > 0) {
+      const sorted = [...cycleRecords.map((r) => r.yieldTons)].sort((a, b) => a - b);
+      const n = sorted.length;
+      const mean = sorted.reduce((a, b) => a + b, 0) / n;
+      return {
+        p5: sorted[Math.floor(n * 0.05)] ?? mean,
+        p95: sorted[Math.floor(n * 0.95)] ?? mean,
+        mean,
+      };
+    }
+    return null;
+  }, [summary, cycleRecords]);
+
+  const handleExport = useCallback(() => {
+    const rows: string[] = [];
+    rows.push('ANALYSIS_EXPORT');
+    rows.push('Metric,Value');
+    rows.push(`Baseline Yield (t/ha),${baseline.toFixed(4)}`);
+    rows.push(`Low Yield Risk (%),${(lowYieldProb * 100).toFixed(2)}`);
+    rows.push(`Season,${getSeason(params.plantingMonth)}`);
+    rows.push(`Planting Month,${params.plantingMonth}`);
+    rows.push(`Irrigation Type,${params.irrigationType}`);
+    rows.push(`ENSO State,${params.ensoState}`);
+    rows.push(`Typhoon Probability (%),${params.typhoonProbability.toFixed(1)}`);
+
+    rows.push('');
+    rows.push('Irrigation Comparison');
+    rows.push('Scenario,Yield (t/ha)');
+    rows.push(`Irrigated,${irrigationNumbers.Irrigated.toFixed(2)}`);
+    rows.push(`Rainfed,${irrigationNumbers.Rainfed.toFixed(2)}`);
+
+    rows.push('');
+    rows.push('ENSO Comparison');
+    rows.push('Scenario,Yield (t/ha)');
+    rows.push(`El Niño,${ensoNumbers['El Niño'].toFixed(2)}`);
+    rows.push(`Neutral,${ensoNumbers.Neutral.toFixed(2)}`);
+    rows.push(`La Niña,${ensoNumbers['La Niña'].toFixed(2)}`);
+
+    rows.push('');
+    rows.push('Typhoon Sensitivity');
+    rows.push('Scenario,Yield (t/ha)');
+    rows.push(`Low (5%),${typhoonNumbers['Low (5%)'].toFixed(2)}`);
+    rows.push(`Mid (current),${typhoonNumbers['Mid (current)'].toFixed(2)}`);
+    rows.push(`High (35%),${typhoonNumbers['High (35%)'].toFixed(2)}`);
+
+    rows.push('');
+    rows.push('Monte Carlo Outlook');
+    rows.push('Bucket,Percent,Count');
+    const total = mcTotals.total || 1;
+    rows.push(`Low (<2.0 t/ha),${((mcTotals.low / total) * 100).toFixed(2)},${mcTotals.low}`);
+    rows.push(`Moderate (2.0-3.0 t/ha),${((mcTotals.mid / total) * 100).toFixed(2)},${mcTotals.mid}`);
+    rows.push(`High (>3.0 t/ha),${((mcTotals.high / total) * 100).toFixed(2)},${mcTotals.high}`);
+    if (mcRange) {
+      rows.push(`P5 (t/ha),${mcRange.p5.toFixed(4)}`);
+      rows.push(`P95 (t/ha),${mcRange.p95.toFixed(4)}`);
+      rows.push(`Mean (t/ha),${mcRange.mean.toFixed(4)}`);
+    }
+
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
+    a.href = url;
+    a.download = `rice_yield_analysis_${ts}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [
+    baseline, lowYieldProb, params, irrigationNumbers, ensoNumbers, typhoonNumbers, mcTotals, mcRange,
+  ]);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-foreground" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-          Scenario Analysis
-        </h2>
-        <p className="text-sm text-muted-foreground mt-0.5" style={{ fontFamily: "'Poppins', sans-serif" }}>
-          Scenarios computed from live simulation parameters · 1,000 Monte Carlo cycles each · 1 t/ha = 20 sacks (50 kg)
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-foreground" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            Live Scenario Analysis
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5" style={{ fontFamily: "'Poppins', sans-serif" }}>
+            Comparisons update in real time and stay in sync with the Simulation tab.
+          </p>
+        </div>
+        <Button onClick={handleExport} variant="outline">
+          Export Analysis CSV
+        </Button>
       </div>
 
-      {/* Heatmap */}
       <Card className="border-border">
         <CardHeader>
-          <CardTitle className="text-base">Yield Risk Heatmap — Planting Month × Typhoon Probability</CardTitle>
+          <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Baseline Snapshot</CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground mb-4">
-            Each cell shows the probability of low yield (&lt;2.0 t/ha) from 500 Monte Carlo cycles.
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr>
-                  <th className="text-left py-1 px-2 text-muted-foreground font-medium">Typhoon %</th>
-                  {MONTH_NAMES_SHORT.map((m) => (
-                    <th key={m} className="text-center py-1 px-1 text-muted-foreground font-medium">{m}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {TYPHOON_LEVELS.map((tp) => (
-                  <tr key={tp}>
-                    <td className="py-1 px-2 font-medium text-muted-foreground">{tp}%</td>
-                    {Array.from({ length: 12 }, (_, i) => i + 1).map((month) => {
-                      const cell = heatmapData.find((d) => d.month === month && d.typhoon === tp);
-                      const risk = cell?.lowRisk ?? 0;
-                      return (
-                        <td key={month} className="py-1 px-1">
-                          <div
-                            className="rounded text-center py-1.5 font-bold text-[10px]"
-                            style={{
-                              backgroundColor: getHeatColor(risk),
-                              color: risk > 0.25 ? 'white' : 'hsl(var(--primary-foreground))',
-                            }}
-                            title={`Mean: ${cell?.meanYield.toFixed(2)} t/ha | Risk: ${(risk * 100).toFixed(1)}%`}
-                          >
-                            {(risk * 100).toFixed(0)}%
-                          </div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <CardContent className="text-sm text-muted-foreground space-y-2" style={{ fontFamily: "'Poppins', sans-serif" }}>
+          <div>Baseline Yield: <strong>{formatYieldValue(baseline)}</strong></div>
+          <div>Low-Yield Risk: <strong>{(lowYieldProb * 100).toFixed(1)}%</strong></div>
+          <div>Season: <strong>{getSeason(params.plantingMonth)}</strong> (Planting Month {params.plantingMonth})</div>
+        </CardContent>
+      </Card>
+
+
+      <Card className="border-border">
+        <CardHeader>
+          <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Monte Carlo Outlook (Live)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3" style={{ fontFamily: "'Poppins', sans-serif" }}>
+          {mcRange ? (
+            <div className="text-sm text-muted-foreground">
+              Most likely range: <strong>{formatYieldRange(mcRange.p5, mcRange.p95)}</strong>.
+              Mean so far: <strong>{formatYieldValue(mcRange.mean)}</strong>.
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">
+              Start the simulation to build the Monte Carlo outlook.
+            </div>
+          )}
+          <ResponsiveContainer width="100%" height={80}>
+            <BarChart data={mcData} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis type="number" domain={[0, 100]} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} unit="%" />
+              <YAxis type="category" dataKey="name" hide />
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8 }} formatter={(v: number) => `${v}%`} />
+              <Bar dataKey="Low" stackId="mc" fill="hsl(var(--destructive))" radius={[4, 0, 0, 4]} />
+              <Bar dataKey="Moderate" stackId="mc" fill="hsl(var(--warning))" />
+              <Bar dataKey="High" stackId="mc" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+          <ChartLegend
+            items={[
+              { label: mcLabels.low, color: 'hsl(var(--destructive))', variant: 'fill' },
+              { label: mcLabels.mid, color: 'hsl(var(--warning))', variant: 'fill' },
+              { label: mcLabels.high, color: 'hsl(var(--primary))', variant: 'fill' },
+            ]}
+          />
+          {isFarmer && (
+            <div className="text-xs text-muted-foreground">
+              Farmer note: This shows the chance of low, moderate, or high harvests based on the live simulation.
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: "'Poppins', sans-serif" }}>
+            <div>Low: {mcPercents ? `${mcPercents.low.toFixed(1)}%` : '---'} ({mcTotals.low} cycles)</div>
+            <div>Moderate: {mcPercents ? `${mcPercents.mid.toFixed(1)}%` : '---'} ({mcTotals.mid} cycles)</div>
+            <div>High: {mcPercents ? `${mcPercents.high.toFixed(1)}%` : '---'} ({mcTotals.high} cycles)</div>
+            <div>Total cycles: {mcTotals.total}</div>
           </div>
-          <div className="flex items-center gap-3 mt-4 text-[10px] text-muted-foreground">
-            <span>Low Risk</span>
-            {[0, 0.07, 0.12, 0.20, 0.30, 0.40].map((v, i) => (
-              <div key={i} className="w-6 h-4 rounded" style={{ backgroundColor: getHeatColor(v) }} />
-            ))}
-            <span>High Risk</span>
+          <div className="text-xs text-muted-foreground">
+            Based on {mcTotals.total} completed cycles from the live simulation.
           </div>
         </CardContent>
       </Card>
@@ -149,13 +342,27 @@ export default function AnalysisTab() {
               <BarChart data={irrigationData} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis type="number" domain={[0, 5]} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
-                <YAxis type="category" dataKey="category" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} width={90} />
+                <YAxis type="category" dataKey="category" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} width={110} />
                 <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8 }} />
-                <Legend />
                 <Bar dataKey="Irrigated" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
                 <Bar dataKey="Rainfed" fill="hsl(var(--chart-3))" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            <ChartLegend
+              items={[
+                { label: 'Irrigated', color: 'hsl(var(--primary))', variant: 'fill' },
+                { label: 'Rainfed', color: 'hsl(var(--chart-3))', variant: 'fill' },
+              ]}
+            />
+            {isFarmer && (
+              <div className="mt-3 text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
+                Farmer note: This compares expected yields if the same field is irrigated versus rainfed, based on current conditions.
+              </div>
+            )}
+            <div className="mt-2 grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: "'Poppins', sans-serif" }}>
+              <div>Irrigated: {formatYieldValue(irrigationNumbers.Irrigated)}</div>
+              <div>Rainfed: {formatYieldValue(irrigationNumbers.Rainfed)}</div>
+            </div>
           </CardContent>
         </Card>
 
@@ -166,60 +373,78 @@ export default function AnalysisTab() {
               <BarChart data={ensoData} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis type="number" domain={[0, 5]} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
-                <YAxis type="category" dataKey="category" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} width={110} />
+                <YAxis type="category" dataKey="category" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} width={130} />
                 <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8 }} />
-                <Legend />
                 <Bar dataKey="El Niño" fill="hsl(var(--chart-5))" radius={[0, 4, 4, 0]} />
                 <Bar dataKey="Neutral" fill="hsl(var(--chart-4))" radius={[0, 4, 4, 0]} />
                 <Bar dataKey="La Niña" fill="hsl(var(--chart-2))" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            <ChartLegend
+              items={[
+                { label: 'El Niño', color: 'hsl(var(--chart-5))', variant: 'fill' },
+                { label: 'Neutral', color: 'hsl(var(--chart-4))', variant: 'fill' },
+                { label: 'La Niña', color: 'hsl(var(--chart-2))', variant: 'fill' },
+              ]}
+            />
+            {isFarmer && (
+              <div className="mt-3 text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
+                Farmer note: ENSO shifts rainfall patterns, which changes yield. This shows the expected yield under each ENSO state.
+              </div>
+            )}
+            <div className="mt-2 grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: "'Poppins', sans-serif" }}>
+              <div>El Niño: {formatYieldValue(ensoNumbers['El Niño'])}</div>
+              <div>Neutral: {formatYieldValue(ensoNumbers.Neutral)}</div>
+              <div>La Niña: {formatYieldValue(ensoNumbers['La Niña'])}</div>
+            </div>
           </CardContent>
         </Card>
 
-        <Card className="border-border">
-          <CardHeader><CardTitle className="text-base">Typhoon Probability Impact</CardTitle></CardHeader>
+        <Card className="border-border lg:col-span-2">
+          <CardHeader><CardTitle className="text-base">Typhoon Probability Sensitivity</CardTitle></CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={typhoonData} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis type="number" domain={[0, 5]} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
-                <YAxis type="category" dataKey="category" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} width={90} />
+                <YAxis type="category" dataKey="category" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} width={130} />
                 <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8 }} />
-                <Legend />
                 <Bar dataKey="Low (5%)" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="Mid (current)" fill="hsl(var(--chart-4))" radius={[0, 4, 4, 0]} />
                 <Bar dataKey="High (35%)" fill="hsl(var(--chart-5))" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border">
-          <CardHeader><CardTitle className="text-base">Crop Failure Risk (Yield &lt; 2.0 t/ha)</CardTitle></CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={riskData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="scenario" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} angle={-20} textAnchor="end" height={50} />
-                <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} label={{ value: 'Risk %', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))' }} />
-                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8 }} />
-                <Bar dataKey="risk" fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <ChartLegend
+              items={[
+                { label: 'Low (5%)', color: 'hsl(var(--primary))', variant: 'fill' },
+                { label: 'Mid (current)', color: 'hsl(var(--chart-4))', variant: 'fill' },
+                { label: 'High (35%)', color: 'hsl(var(--chart-5))', variant: 'fill' },
+              ]}
+            />
+            {isFarmer && (
+              <div className="mt-3 text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
+                Farmer note: Higher typhoon chances reduce expected yield. This chart shows how sensitive your outcome is to storms.
+              </div>
+            )}
+            <div className="mt-2 grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: "'Poppins', sans-serif" }}>
+              <div>Low (5%): {formatYieldValue(typhoonNumbers['Low (5%)'])}</div>
+              <div>Mid (current): {formatYieldValue(typhoonNumbers['Mid (current)'])}</div>
+              <div>High (35%): {formatYieldValue(typhoonNumbers['High (35%)'])}</div>
+            </div>
           </CardContent>
         </Card>
       </div>
 
       <Card className="border-border">
         <CardHeader>
-          <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Key Findings</CardTitle>
+          <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Interpretation (Calibrated)</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-2" style={{ fontFamily: "'Poppins', sans-serif" }}>
-          <p>• <strong>Irrigation</strong> is the most controllable factor, adding ~0.3 t/ha (~6 sacks per hectare) and meaningfully reducing crop failure probability.</p>
-          <p>• <strong>ENSO state</strong> has a significant effect: El Niño reduces yields by ~8 sacks per hectare on average, while La Niña adds ~6 sacks.</p>
-          <p>• <strong>Typhoon frequency</strong> is the largest uncontrollable risk. At 35% probability, expected yield drops significantly and crop failure risk rises sharply.</p>
-          <p>• The <strong>heatmap</strong> shows that wet season months (June–October) combined with high typhoon probability create the highest-risk zones for Filipino farmers.</p>
-          <p>• Monte Carlo simulation (500–1,000 cycles per scenario) gives statistically robust estimates for farm-level risk and insurance planning.</p>
+          <div className="font-semibold text-foreground">{interpretation.headline}</div>
+          <p>{interpretation.note}</p>
+          {interpretation.takeaways.map((t) => (
+            <p key={t}>- {t}</p>
+          ))}
         </CardContent>
       </Card>
     </div>
