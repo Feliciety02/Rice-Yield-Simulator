@@ -46,7 +46,7 @@ function ShapeBox({ shape, label }: { shape: string; label: string }) {
   }
 
   return (
-    <div className={`${base} rounded-lg border-border bg-card text-foreground`}>
+    <div className={`${base} rounded-2xl border-border bg-card text-foreground`}>
       {label}
     </div>
   );
@@ -62,7 +62,7 @@ export default function ModelFlowTab() {
         </p>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-6 md:p-8">
+      <div className="rounded-2xl border border-border bg-card p-6 md:p-8">
         <div className="flex flex-col items-center gap-1">
           {steps.map((step, i) => (
             <div key={step.id} className="flex flex-col items-center">
@@ -79,7 +79,7 @@ export default function ModelFlowTab() {
       </div>
 
       {/* Legend */}
-      <div className="rounded-xl border border-border bg-card p-5">
+      <div className="rounded-2xl border border-border bg-card p-5">
         <div className="text-xs font-semibold text-foreground mb-3">Legend</div>
         <div className="flex flex-wrap gap-6 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
@@ -87,7 +87,7 @@ export default function ModelFlowTab() {
             <span>Terminal / Record</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-5 rounded border border-border bg-card" />
+            <div className="w-8 h-5 rounded-lg border border-border bg-card" />
             <span>Process</span>
           </div>
           <div className="flex items-center gap-2">
