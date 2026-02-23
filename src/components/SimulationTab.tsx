@@ -9,7 +9,7 @@ import { Slider } from '@/components/ui/slider';
 import WeatherScene from './WeatherScene';
 import ChartLegend from './ChartLegend';
 import { useSimulationStore } from '@/store/simulationStore';
-import { IrrigationType, ENSOState, WeatherType, getWeatherWeights } from '@/lib/simulation';
+import { IrrigationType, ENSOState, WeatherType, TyphoonSeverity, getSeason, getWeatherWeights } from '@/lib/simulation';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Cell, LineChart, Line, Area, ComposedChart,
@@ -32,6 +32,11 @@ const WEATHER_BG: Record<WeatherType, string> = {
   Normal: 'hsla(200, 60%, 55%, 0.2)',
   Wet: 'hsla(210, 60%, 50%, 0.2)',
   Typhoon: 'hsla(0, 72%, 50%, 0.2)',
+};
+
+const TYPHOON_SEVERITY_COLORS: Record<TyphoonSeverity, string> = {
+  Moderate: 'hsl(35, 90%, 55%)',
+  Severe: 'hsl(0, 80%, 55%)',
 };
 
 const YIELD_COLOR = 'hsl(var(--primary))';
@@ -130,6 +135,7 @@ function seededWeather(day: number, month: number, year: number, typhoonProb: nu
 
 function WeatherTimeline({
   timeline,
+  typhoonSeverityTimeline,
   daysPerCycle,
   cycleStartDate,
   firstCycleStartDate,
@@ -139,6 +145,7 @@ function WeatherTimeline({
   typhoonProbability,
 }: {
   timeline: WeatherType[];
+  typhoonSeverityTimeline: (TyphoonSeverity | null)[];
   daysPerCycle: number;
   cycleStartDate: string;
   firstCycleStartDate: string;
@@ -211,19 +218,20 @@ function WeatherTimeline({
     const inCycle = inCycle1 || inCycle2;
 
     if (!inCycle) {
-      return { day, weather: null as WeatherType | null };
+      return { day, weather: null as WeatherType | null, severity: null as TyphoonSeverity | null };
     }
 
     if (canUseActual && inCycle1) {
       const dayIndex = Math.floor((dateToUtcMs(currentDate) - dateToUtcMs(plantingStart)) / 86400000);
       const actual = timeline[dayIndex];
       if (actual) {
-        return { day, weather: actual };
+        const severity = actual === 'Typhoon' ? (typhoonSeverityTimeline[dayIndex] ?? null) : null;
+        return { day, weather: actual, severity };
       }
     }
 
     const weather = seededWeather(day, calendarMonth + 1, calendarYear, typhoonProbability / 100);
-    return { day, weather };
+    return { day, weather, severity: null as TyphoonSeverity | null };
   });
 
   const canGoPrev = (() => {
@@ -292,10 +300,22 @@ function WeatherTimeline({
               key={cell.day}
               className="w-8 h-8 rounded-md border border-border flex items-center justify-center relative shrink-0"
               style={{ backgroundColor: cell.weather ? `${WEATHER_BG[cell.weather]}` : 'transparent' }}
-              title={cell.weather ? `Day ${cell.day}: ${cell.weather}` : `Day ${cell.day}: Rest / land prep`}
+              title={
+                cell.weather
+                  ? `Day ${cell.day}: ${cell.weather}${cell.weather === 'Typhoon' && cell.severity ? ` (${cell.severity})` : ''}`
+                  : `Day ${cell.day}: Rest / land prep`
+              }
             >
               <span className="absolute top-0.5 left-0.5 text-[8px] text-muted-foreground">{cell.day}</span>
               {cell.weather ? <WeatherIcon weather={cell.weather} className="w-3.5 h-3.5" /> : null}
+              {cell.weather === 'Typhoon' && cell.severity && (
+                <span
+                  className="absolute top-0.5 right-0.5 text-[8px] font-semibold text-white rounded-full px-1 leading-[1.1]"
+                  style={{ backgroundColor: TYPHOON_SEVERITY_COLORS[cell.severity] }}
+                >
+                  {cell.severity === 'Severe' ? 'S' : 'M'}
+                </span>
+              )}
               {plantingMarkers[cell.day] && (
                 <span className="absolute bottom-0.5 right-0.5 text-[8px] font-semibold text-primary">
                   {plantingMarkers[cell.day]}
@@ -364,6 +384,14 @@ function WeatherTimeline({
                       <div className="text-[9px] text-muted-foreground">{cell.day}</div>
                       <div className="flex items-center justify-between">
                         {cell.weather ? <WeatherIcon weather={cell.weather} className="w-4 h-4" /> : null}
+                        {cell.weather === 'Typhoon' && cell.severity && (
+                          <span
+                            className="text-[9px] font-semibold text-white rounded-full px-1 leading-[1.1]"
+                            style={{ backgroundColor: TYPHOON_SEVERITY_COLORS[cell.severity] }}
+                          >
+                            {cell.severity === 'Severe' ? 'S' : 'M'}
+                          </span>
+                        )}
                         {plantingMarkers[cell.day] && (
                           <span className="text-[9px] font-semibold text-primary">{plantingMarkers[cell.day]}</span>
                         )}
@@ -385,6 +413,8 @@ function WeatherTimeline({
               color: WEATHER_COLORS[k],
               variant: 'fill' as const,
             })),
+            { label: 'Typhoon severity: Moderate (M)', color: TYPHOON_SEVERITY_COLORS.Moderate, variant: 'fill' as const },
+            { label: 'Typhoon severity: Severe (S)', color: TYPHOON_SEVERITY_COLORS.Severe, variant: 'fill' as const },
             { label: 'P1 Primary planting', color: 'hsl(var(--primary))', variant: 'fill' as const },
             { label: 'P2 Second planting', color: 'hsl(var(--primary))', variant: 'fill' as const },
           ]}
@@ -486,7 +516,7 @@ export default function SimulationTab() {
     currentCycleIndex, currentDay, dayProgress,
     currentWeather, currentYield, runningMean, runningSd, lowYieldProb,
     histogramBins, dailyWeatherCounts, dailyTyphoonSeverityCounts, yieldSeries, yieldBandSeries, yieldHistoryOverTime,
-    currentCycleWeatherTimeline, cycleRecords, summary, cycleStartDate, firstCycleStartDate, lastCompletedCycleStartDate,
+    currentCycleWeatherTimeline, currentCycleTyphoonSeverityTimeline, cycleRecords, summary, cycleStartDate, firstCycleStartDate, lastCompletedCycleStartDate,
   } = snap;
 
   const isRunning = status === 'running';
@@ -512,12 +542,15 @@ export default function SimulationTab() {
         <div>
           <div className="font-semibold text-foreground">How the simulation works</div>
           <ol className="text-muted-foreground leading-relaxed list-decimal pl-5 space-y-1">
-            <li>Start a cycle using the selected planting month, irrigation type, ENSO state, and typhoon probability.</li>
-            <li>Advance day-by-day and draw daily weather from seasonal probabilities as months shift across the cycle.</li>
-            <li>If a typhoon day occurs, assign a severity level (moderate or severe).</li>
-            <li>Aggregate the daily weather mix into a base yield, then apply irrigation and ENSO adjustments.</li>
-            <li>Add a small random noise term to reflect natural variability.</li>
-            <li>After each cycle, advance the calendar by the 30-day rest gap and update totals, distributions, confidence bands, and risk metrics.</li>
+            <li>Create a new crop cycle with a start date and initialize the 120-day timeline.</li>
+            <li>Assign crop parameters: planting month, irrigation type, ENSO state, and typhoon probability.</li>
+            <li>Blend the season (dry, wet, or transition) based on the start month.</li>
+            <li>Advance day-by-day and sample daily weather as months shift through the cycle.</li>
+            <li>If a typhoon day occurs, tag a severity level (moderate or severe).</li>
+            <li>Accumulate the daily weather mix and compute the base yield.</li>
+            <li>Apply irrigation and ENSO adjustments, then add a small random noise term.</li>
+            <li>Record the final yield (clamped at zero) and decide if it is low yield (&lt; 2.0 t/ha).</li>
+            <li>Advance the calendar by the 30-day rest gap, then update totals, distributions, confidence bands, and risk metrics.</li>
           </ol>
         </div>
         <div className="space-y-3">
@@ -554,6 +587,7 @@ export default function SimulationTab() {
   const displayDay = isFinished ? params.daysPerCycle : currentDay;
   const cycleStart = useMemo(() => parseDateOnly(cycleStartDate), [cycleStartDate]);
   const cycleStartMonth = cycleStart.getMonth() + 1;
+  const currentSeason = useMemo(() => getSeason(cycleStartMonth), [cycleStartMonth]);
 
   const weatherData = useMemo(() => (
     (Object.keys(dailyWeatherCounts) as WeatherType[]).map((key) => ({
@@ -590,6 +624,13 @@ export default function SimulationTab() {
   const latestYield = yieldSeries.length > 0 ? yieldSeries[yieldSeries.length - 1].yield : null;
   const latestMean = yieldHistoryOverTime.length > 0 ? yieldHistoryOverTime[yieldHistoryOverTime.length - 1] : null;
   const summaryNumbers = summary ?? null;
+  const noiseSdValue = summaryNumbers?.noiseSd ?? 0.2;
+  const lowYieldCount = useMemo(
+    () => cycleRecords.reduce((acc, r) => acc + (r.yieldTons < 2.0 ? 1 : 0), 0),
+    [cycleRecords]
+  );
+  const lowYieldPct = cycleRecords.length > 0 ? (lowYieldCount / cycleRecords.length) * 100 : 0;
+  const lowYieldFlagText = cycleRecords.length > 0 ? `${lowYieldCount} (${lowYieldPct.toFixed(1)}%)` : '---';
   const weatherPercents = totalWeather > 0
     ? (Object.keys(dailyWeatherCounts) as WeatherType[]).reduce((acc, key) => {
       acc[key] = (dailyWeatherCounts[key] / totalWeather) * 100;
@@ -976,16 +1017,22 @@ export default function SimulationTab() {
               ? [
                   { label: 'Cycle', value: cycleLabel },
                   { label: 'Day', value: `${displayDay} / ${params.daysPerCycle}` },
+                  { label: 'Season', value: currentSeason },
                   { label: 'Current Yield', value: currentYield != null ? formatYieldValue(currentYield) : '---' },
                   { label: 'Running Mean', value: runningMean > 0 ? formatYieldValue(runningMean) : '---' },
+                  { label: 'Natural Variability', value: `${formatSacks(noiseSdValue)} sacks SD` },
+                  { label: 'Low Yield Flags (<40 sacks)', value: lowYieldFlagText },
                   { label: 'Low Yield Risk', value: `${(lowYieldProb * 100).toFixed(1)}%` },
                 ]
               : [
                   { label: 'Cycle', value: cycleLabel },
                   { label: 'Day', value: `${displayDay} / ${params.daysPerCycle}` },
+                  { label: 'Season', value: currentSeason },
                   { label: 'Current Yield', value: currentYield != null ? `${currentYield.toFixed(2)} t/ha` : '---' },
                   { label: 'Running Mean', value: runningMean > 0 ? `${runningMean.toFixed(2)} t/ha` : '---' },
                   { label: 'Running Mean Sacks', value: runningMean > 0 ? `${formatSacks(runningMean)} sacks` : '---' },
+                  { label: 'Random Noise SD', value: `${noiseSdValue.toFixed(2)} t/ha` },
+                  { label: 'Low Yield Flags (<2.0 t/ha)', value: lowYieldFlagText },
                 ]
           ).concat([{ label: 'Confidence', value: confidence.label }]).map((stat) => (
             <Card key={stat.label} className="border-border">
@@ -1004,6 +1051,7 @@ export default function SimulationTab() {
 
         <WeatherTimeline
           timeline={currentCycleWeatherTimeline}
+          typhoonSeverityTimeline={currentCycleTyphoonSeverityTimeline ?? []}
           daysPerCycle={params.daysPerCycle}
           cycleStartDate={cycleStartDate}
           firstCycleStartDate={firstCycleStartDate}

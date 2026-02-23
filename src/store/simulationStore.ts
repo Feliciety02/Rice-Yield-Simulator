@@ -40,6 +40,7 @@ const initialSnapshot: EngineSnapshot = {
   currentWeather: null,
   currentYield: null,
   currentCycleWeatherTimeline: [],
+  currentCycleTyphoonSeverityTimeline: [],
   cycleStartDate: formatDate(initialCycleStartDate),
   firstCycleStartDate: formatDate(initialCycleStartDate),
   lastCompletedCycleStartDate: null,

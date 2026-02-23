@@ -46,7 +46,9 @@ class SimulationEngine:
         self.currentWeather: Optional[WeatherType] = None
         self.currentYield: Optional[float] = None
         self.currentCycleWeatherTimeline: List[WeatherType] = []
+        self.currentCycleTyphoonSeverityTimeline: List[Optional[TyphoonSeverity]] = []
         self.cycleWeatherSequence: List[WeatherType] = []
+        self.cycleTyphoonSeveritySequence: List[Optional[TyphoonSeverity]] = []
         self.cycleStartDate: date = date.today().replace(month=self.params["plantingMonth"], day=1)
         self.firstCycleStartDate: date = self.cycleStartDate
         self.lastCompletedCycleStartDate: Optional[date] = None
@@ -155,7 +157,9 @@ class SimulationEngine:
         self.currentWeather = None
         self.currentYield = None
         self.currentCycleWeatherTimeline = []
+        self.currentCycleTyphoonSeverityTimeline = []
         self.cycleWeatherSequence = []
+        self.cycleTyphoonSeveritySequence = []
 
         self.welfordCount = 0
         self.welfordMean = 0.0
@@ -236,8 +240,11 @@ class SimulationEngine:
         self.cycleWeatherAccum[weather] += 1
         self.dailyWeatherCounts[weather] += 1
         self.currentCycleWeatherTimeline.append(weather)
+        self.currentCycleTyphoonSeverityTimeline.append(typhoon_severity)
         if len(self.currentCycleWeatherTimeline) > self.params["daysPerCycle"]:
             self.currentCycleWeatherTimeline.pop(0)
+        if len(self.currentCycleTyphoonSeverityTimeline) > self.params["daysPerCycle"]:
+            self.currentCycleTyphoonSeverityTimeline.pop(0)
 
         if self.currentDay >= self.params["daysPerCycle"]:
             dominant = self._get_dominant_weather()
@@ -258,6 +265,7 @@ class SimulationEngine:
         while self._cycle_elapsed_s >= cycle_s and self.status == "running":
             self.currentDay = self.params["daysPerCycle"]
             self.currentCycleWeatherTimeline = list(self.cycleWeatherSequence)
+            self.currentCycleTyphoonSeverityTimeline = list(self.cycleTyphoonSeveritySequence)
             dominant = self._get_dominant_weather()
             season = get_season(self.cycleStartDate.month)
             self._finalize_cycle(season, dominant)
@@ -277,6 +285,7 @@ class SimulationEngine:
             if idx < len(self.cycleWeatherSequence):
                 self.currentWeather = self.cycleWeatherSequence[idx]
             self.currentCycleWeatherTimeline = self.cycleWeatherSequence[:day_index]
+            self.currentCycleTyphoonSeverityTimeline = self.cycleTyphoonSeveritySequence[:day_index]
 
     def _cycle_duration_s(self) -> float:
         base = 0.3
@@ -286,6 +295,7 @@ class SimulationEngine:
     def _prepare_cycle(self):
         t_prob = self.params["typhoonProbability"] / 100
         self.cycleWeatherSequence = []
+        self.cycleTyphoonSeveritySequence = []
         self.cycleWeatherAccum = {"Dry": 0, "Normal": 0, "Wet": 0, "Typhoon": 0}
         self.cycleTyphoonSeverityCounts = {"Moderate": 0, "Severe": 0}
         for d in range(self.params["daysPerCycle"]):
@@ -296,9 +306,13 @@ class SimulationEngine:
             if w == "Typhoon":
                 severity = get_typhoon_severity()
                 self.cycleTyphoonSeverityCounts[severity] += 1
+                self.cycleTyphoonSeveritySequence.append(severity)
+            else:
+                self.cycleTyphoonSeveritySequence.append(None)
         self.currentDay = 0
         self.currentWeather = self.cycleWeatherSequence[0] if self.cycleWeatherSequence else None
         self.currentCycleWeatherTimeline = []
+        self.currentCycleTyphoonSeverityTimeline = []
 
     def _get_dominant_weather(self) -> WeatherType:
         counts = self.cycleWeatherAccum
@@ -389,6 +403,8 @@ class SimulationEngine:
         self.cycleTyphoonSeverityCounts = {"Moderate": 0, "Severe": 0}
         self.currentCycleWeatherTimeline = []
         self.cycleWeatherSequence = []
+        self.currentCycleTyphoonSeverityTimeline = []
+        self.cycleTyphoonSeveritySequence = []
 
     def _finish(self):
         self.status = "finished"
@@ -452,6 +468,7 @@ class SimulationEngine:
             "currentWeather": self.currentWeather,
             "currentYield": self.currentYield,
             "currentCycleWeatherTimeline": list(self.currentCycleWeatherTimeline),
+            "currentCycleTyphoonSeverityTimeline": list(self.currentCycleTyphoonSeverityTimeline),
             "cycleStartDate": self.cycleStartDate.isoformat(),
             "firstCycleStartDate": self.firstCycleStartDate.isoformat(),
             "lastCompletedCycleStartDate": self.lastCompletedCycleStartDate.isoformat() if self.lastCompletedCycleStartDate else None,

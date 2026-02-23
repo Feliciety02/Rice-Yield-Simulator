@@ -60,6 +60,7 @@ export interface EngineSnapshot {
   currentWeather: WeatherType | null;
   currentYield: number | null;
   currentCycleWeatherTimeline: WeatherType[];
+  currentCycleTyphoonSeverityTimeline: (TyphoonSeverity | null)[];
   cycleStartDate: string;
   firstCycleStartDate: string;
   lastCompletedCycleStartDate: string | null;
@@ -205,6 +206,7 @@ class SimulationEngine {
   private currentWeather: WeatherType | null = null;
   private currentYield: number | null = null;
   private currentCycleWeatherTimeline: WeatherType[] = [];
+  private currentCycleTyphoonSeverityTimeline: (TyphoonSeverity | null)[] = [];
   private cycleWeatherSequence: WeatherType[] = [];
   private cycleStartDate: Date = new Date();
   private firstCycleStartDate: Date = new Date();
@@ -343,6 +345,7 @@ class SimulationEngine {
     this.currentWeather = null;
     this.currentYield = null;
     this.currentCycleWeatherTimeline = [];
+    this.currentCycleTyphoonSeverityTimeline = [];
     this.cycleWeatherSequence = [];
     this.welfordCount = 0;
     this.welfordMean = 0;
@@ -429,8 +432,12 @@ class SimulationEngine {
     this.cycleWeatherAccum[weather]++;
     this.dailyWeatherCounts[weather]++;
     this.currentCycleWeatherTimeline.push(weather);
+    this.currentCycleTyphoonSeverityTimeline.push(typhoonSeverity);
     if (this.currentCycleWeatherTimeline.length > this.params.daysPerCycle) {
       this.currentCycleWeatherTimeline.shift();
+    }
+    if (this.currentCycleTyphoonSeverityTimeline.length > this.params.daysPerCycle) {
+      this.currentCycleTyphoonSeverityTimeline.shift();
     }
 
     if (this.currentDay >= this.params.daysPerCycle) {
@@ -456,6 +463,7 @@ class SimulationEngine {
     while (this.cycleElapsedMs >= cycleMs && this.status === 'running') {
       this.currentDay = this.params.daysPerCycle;
       this.currentCycleWeatherTimeline = [...this.cycleWeatherSequence];
+      this.currentCycleTyphoonSeverityTimeline = [...this.cycleTyphoonSeveritySequence];
       const dominantWeather = this.getDominantWeather();
       const season = getSeason(this.cycleStartDate.getMonth() + 1);
       this.finalizeCycle(season, dominantWeather);
@@ -476,6 +484,7 @@ class SimulationEngine {
       const idx = Math.max(0, dayIndex - 1);
       this.currentWeather = this.cycleWeatherSequence[idx] ?? this.currentWeather;
       this.currentCycleWeatherTimeline = this.cycleWeatherSequence.slice(0, dayIndex);
+      this.currentCycleTyphoonSeverityTimeline = this.cycleTyphoonSeveritySequence.slice(0, dayIndex);
     }
   }
 
@@ -528,6 +537,7 @@ class SimulationEngine {
     this.currentDay = 0;
     this.currentWeather = this.cycleWeatherSequence[0] ?? null;
     this.currentCycleWeatherTimeline = [];
+    this.currentCycleTyphoonSeverityTimeline = [];
   }
 
   private finalizeCycle(season: Season, dominantWeather: WeatherType) {
@@ -621,6 +631,7 @@ class SimulationEngine {
     this.cycleTyphoonSeverityCounts = { Moderate: 0, Severe: 0 };
     this.cycleTyphoonSeveritySequence = [];
     this.currentCycleWeatherTimeline = [];
+    this.currentCycleTyphoonSeverityTimeline = [];
     this.cycleWeatherSequence = [];
   }
 
@@ -688,6 +699,7 @@ class SimulationEngine {
       currentWeather: this.currentWeather,
       currentYield: this.currentYield,
       currentCycleWeatherTimeline: [...this.currentCycleWeatherTimeline],
+      currentCycleTyphoonSeverityTimeline: [...this.currentCycleTyphoonSeverityTimeline],
       cycleStartDate: formatDate(this.cycleStartDate),
       firstCycleStartDate: formatDate(this.firstCycleStartDate),
       lastCompletedCycleStartDate: this.lastCompletedCycleStartDate ? formatDate(this.lastCompletedCycleStartDate) : null,
