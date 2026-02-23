@@ -2,21 +2,21 @@ import { useState } from 'react';
 import { Wheat, FlaskConical, GitBranch, Info } from 'lucide-react';
 import SimulationTab from '@/components/SimulationTab';
 import AnalysisTab from '@/components/AnalysisTab';
-import ModelFlowTab from '@/components/ModelFlowTab';
-import AboutTab from '@/components/AboutTab';
+import ModelFlowTab from '../components/ModelFlowTab';
+import AboutTab from '../components/AboutTab';
 import { useSimulationStore } from '@/store/simulationStore';
 
-type Tab = 'simulation' | 'analysis' | 'model' | 'about';
+type Tab = 'home' | 'simulation' | 'analysis' | 'model';
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  { id: 'home',       label: 'Home',       icon: <Info className="w-4 h-4" /> },
   { id: 'simulation', label: 'Simulation', icon: <Wheat className="w-4 h-4" /> },
   { id: 'analysis',   label: 'Analysis',   icon: <FlaskConical className="w-4 h-4" /> },
   { id: 'model',      label: 'Model Flow', icon: <GitBranch className="w-4 h-4" /> },
-  { id: 'about',      label: 'About',      icon: <Info className="w-4 h-4" /> },
 ];
 
 const Index = () => {
-  const [activeTab, setActiveTab] = useState<Tab>('simulation');
+  const [activeTab, setActiveTab] = useState<Tab>('home');
   const { viewMode, setViewMode } = useSimulationStore();
 
   return (
@@ -95,10 +95,10 @@ const Index = () => {
         </header>
 
       <main className="container max-w-7xl mx-auto px-4 py-6">
+        {activeTab === 'home'       && <AboutTab />}
         {activeTab === 'simulation' && <SimulationTab />}
         {activeTab === 'analysis'   && <AnalysisTab />}
         {activeTab === 'model'      && <ModelFlowTab />}
-        {activeTab === 'about'      && <AboutTab />}
       </main>
     </div>
   );

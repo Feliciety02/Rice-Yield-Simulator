@@ -294,10 +294,10 @@ function WeatherTimeline({
             ...(Object.keys(WEATHER_COLORS) as WeatherType[]).map((k) => ({
               label: k,
               color: WEATHER_COLORS[k],
-              variant: 'fill',
+              variant: 'fill' as const,
             })),
-            { label: 'P1 Primary planting', color: 'hsl(var(--primary))', variant: 'fill' },
-            { label: 'P2 Second planting', color: 'hsl(var(--primary))', variant: 'fill' },
+            { label: 'P1 Primary planting', color: 'hsl(var(--primary))', variant: 'fill' as const },
+            { label: 'P2 Second planting', color: 'hsl(var(--primary))', variant: 'fill' as const },
           ]}
         />
       </CardContent>

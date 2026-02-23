@@ -1,5 +1,59 @@
 import { create } from 'zustand';
-import { engine, EngineSnapshot, EngineParams } from '@/lib/simulationEngine';
+import type { EngineSnapshot, EngineParams } from '@/lib/simulationEngine';
+
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
+
+function initBins() {
+  const bins = [];
+  for (let v = 0; v < 5.5; v += 0.5) {
+    bins.push({ label: v.toFixed(1), count: 0 });
+  }
+  return bins;
+}
+
+const initialSnapshot: EngineSnapshot = {
+  status: 'idle',
+  mode: 'day',
+  speedMultiplier: 1,
+  params: {
+    plantingMonth: 6,
+    region: 'Luzon',
+    irrigationType: 'Irrigated',
+    ensoState: 'Neutral',
+    typhoonProbability: 15,
+    cyclesTarget: 100,
+    daysPerCycle: 120,
+  },
+  pendingParams: {},
+  currentCycleIndex: 0,
+  currentDay: 0,
+  dayProgress: 0,
+  runProgress: 0,
+  currentWeather: null,
+  currentYield: null,
+  currentCycleWeatherTimeline: [],
+  runningMean: 0,
+  runningSd: 0,
+  lowYieldProb: 0,
+  yieldHistoryOverTime: [],
+  recentYields: [],
+  yieldSeries: [],
+  yieldBandSeries: [],
+  cycleRecords: [],
+  weatherCounts: { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 },
+  dailyWeatherCounts: { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 },
+  dailyTyphoonSeverityCounts: { Moderate: 0, Severe: 0 },
+  histogramBins: initBins(),
+  summary: null,
+};
+
+async function post(path: string, body: unknown) {
+  await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
 
 interface SimulationStore {
   snap: EngineSnapshot;
@@ -15,18 +69,40 @@ interface SimulationStore {
 }
 
 export const useSimulationStore = create<SimulationStore>((set) => {
-  const setSnap = (snap: EngineSnapshot) => set({ snap });
-  engine.subscribe(setSnap);
+  let polling = false;
+
+  const poll = async () => {
+    if (polling) return;
+    polling = true;
+    try {
+      const res = await fetch(`${API_BASE}/snapshot`);
+      if (res.ok) {
+        const snap = (await res.json()) as EngineSnapshot;
+        set({ snap });
+      }
+    } catch {
+      // ignore network errors; keep last snapshot
+    } finally {
+      polling = false;
+    }
+  };
+
+  const startPolling = () => {
+    poll();
+    setInterval(poll, 100);
+  };
+
+  startPolling();
 
   return {
-    snap: engine.getSnapshot(),
-    start: () => engine.start(),
-    startInstant: () => engine.startInstant(),
-    pause: () => engine.pause(),
-    resume: () => engine.resume(),
-    reset: () => engine.reset(),
-    setSpeed: (m: number) => engine.setSpeed(m),
-    updateParams: (p: Partial<EngineParams>) => engine.updateParams(p),
+    snap: initialSnapshot,
+    start: () => post('/control', { action: 'start' }),
+    startInstant: () => post('/control', { action: 'start_instant' }),
+    pause: () => post('/control', { action: 'pause' }),
+    resume: () => post('/control', { action: 'resume' }),
+    reset: () => post('/control', { action: 'reset' }),
+    setSpeed: (m: number) => post('/speed', { multiplier: m }),
+    updateParams: (p: Partial<EngineParams>) => post('/params', p),
     viewMode: 'farmer',
     setViewMode: (mode) => set({ viewMode: mode }),
   };
