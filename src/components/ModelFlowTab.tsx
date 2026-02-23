@@ -1,5 +1,3 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-
 const steps = [
   { id: 1, label: 'Create Crop Cycle', shape: 'rounded', desc: 'Initialize a new 120-day crop cycle' },
   { id: 2, label: 'Assign Crop Parameters', shape: 'rect', desc: 'Set region, irrigation, ENSO, planting month' },
@@ -16,14 +14,14 @@ const steps = [
   { id: 13, label: 'Dispose', shape: 'rect', desc: 'End cycle, aggregate statistics' },
 ];
 
-function ShapeBox({ shape, label }: { shape: string; label: string; active?: boolean }) {
-  const base = 'px-4 py-2.5 text-sm font-medium text-center border-2 transition-all min-w-[180px]';
+function ShapeBox({ shape, label }: { shape: string; label: string }) {
+  const base = 'px-4 py-2.5 text-sm font-medium text-center border transition-all min-w-[180px]';
 
   if (shape === 'diamond') {
     return (
       <div className="flex justify-center">
         <div
-          className={`${base} border-primary bg-primary/10 text-foreground rotate-0`}
+          className={`${base} border-primary/30 bg-primary/5 text-foreground`}
           style={{
             clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
             width: 160,
@@ -41,14 +39,14 @@ function ShapeBox({ shape, label }: { shape: string; label: string; active?: boo
 
   if (shape === 'rounded') {
     return (
-      <div className={`${base} rounded-full border-accent bg-accent/10 text-foreground`}>
+      <div className={`${base} rounded-full border-primary/25 bg-primary/5 text-foreground`}>
         {label}
       </div>
     );
   }
 
   return (
-    <div className={`${base} rounded-lg border-primary bg-card text-foreground`}>
+    <div className={`${base} rounded-lg border-border bg-card text-foreground`}>
       {label}
     </div>
   );
@@ -57,55 +55,54 @@ function ShapeBox({ shape, label }: { shape: string; label: string; active?: boo
 export default function ModelFlowTab() {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <Card className="border-border">
-        <CardHeader>
-          <CardTitle className="text-lg">Simulation Model Flow</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Arena-style discrete event simulation flowchart for the Philippine Rice Yield model.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col items-center gap-1">
-            {steps.map((step, i) => (
-              <div key={step.id} className="flex flex-col items-center">
-                <ShapeBox shape={step.shape} label={step.label} />
-                <p className="text-[10px] text-muted-foreground mt-0.5 mb-1 max-w-[200px] text-center">
-                  {step.desc}
-                </p>
-                {i < steps.length - 1 && (
-                  <div className="w-0.5 h-4 bg-primary/40" />
-                )}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      <div className="text-center space-y-1 mb-8">
+        <h2 className="text-2xl font-semibold text-foreground">Simulation Model Flow</h2>
+        <p className="text-sm text-muted-foreground">
+          Arena-style discrete event simulation flowchart
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-6 md:p-8">
+        <div className="flex flex-col items-center gap-1">
+          {steps.map((step, i) => (
+            <div key={step.id} className="flex flex-col items-center">
+              <ShapeBox shape={step.shape} label={step.label} />
+              <p className="text-[10px] text-muted-foreground mt-0.5 mb-1 max-w-[200px] text-center">
+                {step.desc}
+              </p>
+              {i < steps.length - 1 && (
+                <div className="w-px h-4 bg-border" />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Legend */}
-      <Card className="border-border">
-        <CardHeader><CardTitle className="text-sm">Legend</CardTitle></CardHeader>
-        <CardContent className="flex flex-wrap gap-6 text-sm">
+      <div className="rounded-xl border border-border bg-card p-5">
+        <div className="text-xs font-semibold text-foreground mb-3">Legend</div>
+        <div className="flex flex-wrap gap-6 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-6 rounded-full border-2 border-accent bg-accent/10" />
-            <span className="text-muted-foreground">Terminal / Record</span>
+            <div className="w-8 h-5 rounded-full border border-primary/25 bg-primary/5" />
+            <span>Terminal / Record</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-6 rounded border-2 border-primary bg-card" />
-            <span className="text-muted-foreground">Process</span>
+            <div className="w-8 h-5 rounded border border-border bg-card" />
+            <span>Process</span>
           </div>
           <div className="flex items-center gap-2">
             <div
-              className="w-8 h-6 border-2 border-primary bg-primary/10"
+              className="w-8 h-5 border border-primary/30 bg-primary/5"
               style={{ clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
             />
-            <span className="text-muted-foreground">Decision</span>
+            <span>Decision</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-6 h-0.5 bg-primary/40" />
-            <span className="text-muted-foreground">Flow Arrow</span>
+            <div className="w-6 h-px bg-border" />
+            <span>Flow</span>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
