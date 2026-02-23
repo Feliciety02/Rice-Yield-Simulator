@@ -1,6 +1,7 @@
 import math
 import threading
 import time
+from datetime import date, timedelta
 from typing import Dict, List, Optional
 
 from .simulation import (
@@ -12,8 +13,10 @@ from .simulation import (
     get_season,
     get_weather,
     get_typhoon_severity,
-    compute_yield,
+    compute_yield_from_counts,
 )
+
+GAP_DAYS = 30
 
 
 class SimulationEngine:
@@ -44,6 +47,9 @@ class SimulationEngine:
         self.currentYield: Optional[float] = None
         self.currentCycleWeatherTimeline: List[WeatherType] = []
         self.cycleWeatherSequence: List[WeatherType] = []
+        self.cycleStartDate: date = date.today().replace(month=self.params["plantingMonth"], day=1)
+        self.firstCycleStartDate: date = self.cycleStartDate
+        self.lastCompletedCycleStartDate: Optional[date] = None
 
         # welford
         self.welfordCount = 0
@@ -134,6 +140,10 @@ class SimulationEngine:
             if not is_active:
                 self.params.update(partial)
                 self.pending_params = {}
+                if "plantingMonth" in partial:
+                    self.cycleStartDate = date.today().replace(month=self.params["plantingMonth"], day=1)
+                    self.firstCycleStartDate = self.cycleStartDate
+                    self.lastCompletedCycleStartDate = None
             elif partial:
                 self.pending_params.update(partial)
 
@@ -179,6 +189,9 @@ class SimulationEngine:
 
         self.params.update(self.pending_params)
         self.pending_params = {}
+        self.cycleStartDate = date.today().replace(month=self.params["plantingMonth"], day=1)
+        self.firstCycleStartDate = self.cycleStartDate
+        self.lastCompletedCycleStartDate = None
 
     # ----------------------------
 
@@ -209,8 +222,9 @@ class SimulationEngine:
             self._finish()
             return
 
-        season = get_season(self.params["plantingMonth"])
-        weather = get_weather(self.params["plantingMonth"], self.params["typhoonProbability"] / 100)
+        day_index = self.currentDay
+        month = self._month_for_day(day_index)
+        weather = get_weather(month, self.params["typhoonProbability"] / 100)
         typhoon_severity = None
         if weather == "Typhoon":
             typhoon_severity = get_typhoon_severity()
@@ -227,6 +241,7 @@ class SimulationEngine:
 
         if self.currentDay >= self.params["daysPerCycle"]:
             dominant = self._get_dominant_weather()
+            season = get_season(self.cycleStartDate.month)
             self._finalize_cycle(season, dominant)
 
     def _tick_cycle(self, delta_s: float):
@@ -244,7 +259,7 @@ class SimulationEngine:
             self.currentDay = self.params["daysPerCycle"]
             self.currentCycleWeatherTimeline = list(self.cycleWeatherSequence)
             dominant = self._get_dominant_weather()
-            season = get_season(self.params["plantingMonth"])
+            season = get_season(self.cycleStartDate.month)
             self._finalize_cycle(season, dominant)
 
             if self.currentCycleIndex >= self.params["cyclesTarget"]:
@@ -273,8 +288,9 @@ class SimulationEngine:
         self.cycleWeatherSequence = []
         self.cycleWeatherAccum = {"Dry": 0, "Normal": 0, "Wet": 0, "Typhoon": 0}
         self.cycleTyphoonSeverityCounts = {"Moderate": 0, "Severe": 0}
-        for _ in range(self.params["daysPerCycle"]):
-            w = get_weather(self.params["plantingMonth"], t_prob)
+        for d in range(self.params["daysPerCycle"]):
+            month = self._month_for_day(d)
+            w = get_weather(month, t_prob)
             self.cycleWeatherSequence.append(w)
             self.cycleWeatherAccum[w] += 1
             if w == "Typhoon":
@@ -289,12 +305,13 @@ class SimulationEngine:
         return max(counts.keys(), key=lambda k: counts[k])  # type: ignore[return-value]
 
     def _finalize_cycle(self, season: Season, dominant_weather: WeatherType):
+        self.lastCompletedCycleStartDate = self.cycleStartDate
         typhoon_days = self.cycleTyphoonSeverityCounts["Moderate"] + self.cycleTyphoonSeverityCounts["Severe"]
         dominant_severity = None
-        if dominant_weather == "Typhoon" and typhoon_days > 0:
+        if typhoon_days > 0:
             dominant_severity = "Severe" if self.cycleTyphoonSeverityCounts["Severe"] >= self.cycleTyphoonSeverityCounts["Moderate"] else "Moderate"
 
-        result = compute_yield(dominant_weather, self.params, dominant_severity)
+        result = compute_yield_from_counts(self.cycleWeatherAccum, self.cycleTyphoonSeverityCounts, self.params)
         yld = result["final"]
         deterministic = result["deterministic"]
         noise = result["noise"]
@@ -346,7 +363,7 @@ class SimulationEngine:
             "severeTyphoonDays": self.cycleTyphoonSeverityCounts["Severe"],
             "ensoState": self.params["ensoState"],
             "irrigationType": self.params["irrigationType"],
-            "plantingMonth": self.params["plantingMonth"],
+            "plantingMonth": self.cycleStartDate.month,
             "typhoonProbability": self.params["typhoonProbability"],
         }
         self.cycleRecords.append(cycle_record)
@@ -360,8 +377,11 @@ class SimulationEngine:
                 "p95": self.summaryCache["percentile95"],
             }])[-400:]
 
+        prev_days_per_cycle = self.params["daysPerCycle"]
+        prev_planting_month = self.params["plantingMonth"]
         self.params.update(self.pending_params)
         self.pending_params = {}
+        self._advance_cycle_start(prev_days_per_cycle, self.params["plantingMonth"] != prev_planting_month)
 
         self.currentCycleIndex += 1
         self.currentDay = 0
@@ -432,6 +452,9 @@ class SimulationEngine:
             "currentWeather": self.currentWeather,
             "currentYield": self.currentYield,
             "currentCycleWeatherTimeline": list(self.currentCycleWeatherTimeline),
+            "cycleStartDate": self.cycleStartDate.isoformat(),
+            "firstCycleStartDate": self.firstCycleStartDate.isoformat(),
+            "lastCompletedCycleStartDate": self.lastCompletedCycleStartDate.isoformat() if self.lastCompletedCycleStartDate else None,
             "runningMean": self.welfordMean,
             "runningSd": self._welford_sd(),
             "lowYieldProb": (self.lowYieldCount / n) if n > 0 else 0,
@@ -461,3 +484,16 @@ class SimulationEngine:
         idx = min(int(y / 0.5), len(self.histogramBins) - 1)
         if idx >= 0:
             self.histogramBins[idx]["count"] += 1
+
+    def _month_for_day(self, day_index: int) -> int:
+        return (self.cycleStartDate + timedelta(days=day_index)).month
+
+    def _advance_cycle_start(self, prev_days_per_cycle: int, planting_month_changed: bool):
+        next_start = self.cycleStartDate + timedelta(days=prev_days_per_cycle + GAP_DAYS)
+        if planting_month_changed:
+            year = next_start.year
+            candidate = date(year, self.params["plantingMonth"], 1)
+            if candidate < next_start:
+                candidate = date(year + 1, self.params["plantingMonth"], 1)
+            next_start = candidate
+        self.cycleStartDate = next_start

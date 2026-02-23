@@ -3,19 +3,19 @@ import { ArrowDownUp, ArrowLeftRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const steps = [
-  { id: 1, label: 'Create Crop Cycle', shape: 'rounded', desc: 'Initialize a new 120-day crop cycle' },
+  { id: 1, label: 'Create Crop Cycle', shape: 'rounded', desc: 'Initialize a new 120-day crop cycle and start date' },
   { id: 2, label: 'Assign Crop Parameters', shape: 'rect', desc: 'Set irrigation, ENSO, planting month' },
-  { id: 3, label: 'Blend Season', shape: 'diamond', desc: 'Dry / Wet / Transition based on month' },
-  { id: 4, label: 'Assign Weather State', shape: 'rect', desc: 'Sample from normalized seasonal probabilities' },
-  { id: 5, label: 'Process Growing Period', shape: 'rect', desc: 'Simulate 120-day growth phase' },
-  { id: 6, label: 'Decide Weather Type', shape: 'diamond', desc: 'Dry / Normal / Wet / Typhoon' },
-  { id: 7, label: 'If Typhoon, Set Severity', shape: 'diamond', desc: 'Moderate or Severe based on storm intensity' },
-  { id: 8, label: 'Assign Yield', shape: 'rect', desc: 'Base yield + irrigation + ENSO + severity' },
-  { id: 9, label: 'Add Noise', shape: 'rect', desc: 'Apply Normal(0, 0.2) random variation' },
-  { id: 10, label: 'Record Yield', shape: 'rounded', desc: 'Store final yield, ensure >= 0' },
-  { id: 11, label: 'Decide Low Yield', shape: 'diamond', desc: 'Check if yield < 2.0 t/ha' },
-  { id: 12, label: 'Record Low Yield', shape: 'rounded', desc: 'Flag cycle as crop failure' },
-  { id: 13, label: 'Dispose', shape: 'rect', desc: 'End cycle, aggregate statistics' },
+  { id: 3, label: 'Blend Season', shape: 'diamond', desc: 'Dry / Wet / Transition based on start month' },
+  { id: 4, label: 'Sample Daily Weather', shape: 'rect', desc: 'Draw daily weather as months shift through the cycle' },
+  { id: 5, label: 'Tag Typhoon Severity', shape: 'diamond', desc: 'Moderate or Severe for each typhoon day' },
+  { id: 6, label: 'Accumulate Weather Mix', shape: 'rect', desc: 'Count daily weather + typhoon severity totals' },
+  { id: 7, label: 'Assign Yield', shape: 'rect', desc: 'Average daily base + irrigation + ENSO' },
+  { id: 8, label: 'Add Noise', shape: 'rect', desc: 'Apply Normal(0, 0.2) random variation' },
+  { id: 9, label: 'Record Yield', shape: 'rounded', desc: 'Store final yield, ensure >= 0' },
+  { id: 10, label: 'Decide Low Yield', shape: 'diamond', desc: 'Check if yield < 2.0 t/ha' },
+  { id: 11, label: 'Record Low Yield', shape: 'rounded', desc: 'Flag cycle as crop failure' },
+  { id: 12, label: 'Advance Calendar', shape: 'rect', desc: 'Add 30-day rest gap before next cycle' },
+  { id: 13, label: 'Aggregate Statistics', shape: 'rect', desc: 'Update distributions and reports' },
 ];
 
 function ShapeBox({ shape, label }: { shape: string; label: string }) {

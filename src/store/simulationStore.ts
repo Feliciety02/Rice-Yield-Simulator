@@ -11,6 +11,15 @@ function initBins() {
   return bins;
 }
 
+function formatDate(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+const initialCycleStartDate = new Date(new Date().getFullYear(), 5, 1);
+
 const initialSnapshot: EngineSnapshot = {
   status: 'idle',
   mode: 'day',
@@ -31,6 +40,9 @@ const initialSnapshot: EngineSnapshot = {
   currentWeather: null,
   currentYield: null,
   currentCycleWeatherTimeline: [],
+  cycleStartDate: formatDate(initialCycleStartDate),
+  firstCycleStartDate: formatDate(initialCycleStartDate),
+  lastCompletedCycleStartDate: null,
   runningMean: 0,
   runningSd: 0,
   lowYieldProb: 0,

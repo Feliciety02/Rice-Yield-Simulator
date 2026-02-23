@@ -60,6 +60,9 @@ export interface EngineSnapshot {
   currentWeather: WeatherType | null;
   currentYield: number | null;
   currentCycleWeatherTimeline: WeatherType[];
+  cycleStartDate: string;
+  firstCycleStartDate: string;
+  lastCompletedCycleStartDate: string | null;
 
   // running stats (Welford)
   runningMean: number;
@@ -97,6 +100,7 @@ type Listener = (snap: EngineSnapshot) => void;
 const BINS_STEP = 0.5;
 const BINS_MAX = 5.5;
 const MAX_SERIES = 400;
+const GAP_DAYS = 30;
 
 function initBins(): HistogramBin[] {
   const bins: HistogramBin[] = [];
@@ -130,15 +134,45 @@ function gaussianNoise(mean = 0, sd = 0.2): number {
   return mean + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-function computeYield(weather: WeatherType, p: EngineParams, typhoonSeverity: TyphoonSeverity | null) {
-  const base = weather === 'Typhoon' && typhoonSeverity
-    ? TYPHOON_YIELDS[typhoonSeverity]
-    : BASE_YIELDS[weather];
+function computeYieldFromCounts(
+  counts: Record<WeatherType, number>,
+  severityCounts: Record<TyphoonSeverity, number>,
+  p: EngineParams
+) {
+  const totalDays = Object.values(counts).reduce((a, b) => a + b, 0);
+  const moderate = severityCounts.Moderate ?? 0;
+  const severe = severityCounts.Severe ?? 0;
+  const unclassifiedTyphoon = Math.max(0, (counts.Typhoon ?? 0) - moderate - severe);
+  const baseSum =
+    (counts.Dry ?? 0) * BASE_YIELDS.Dry +
+    (counts.Normal ?? 0) * BASE_YIELDS.Normal +
+    (counts.Wet ?? 0) * BASE_YIELDS.Wet +
+    moderate * TYPHOON_YIELDS.Moderate +
+    severe * TYPHOON_YIELDS.Severe +
+    unclassifiedTyphoon * BASE_YIELDS.Typhoon;
+  const base = totalDays > 0 ? baseSum / totalDays : 0;
   const adj = IRRIGATION_ADJ[p.irrigationType] + ENSO_ADJ[p.ensoState];
   const deterministic = base + adj;
   const noise = gaussianNoise();
   const final = Math.max(0, deterministic + noise);
   return { final, deterministic, noise, base };
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date.getTime());
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function monthForDay(startDate: Date, dayIndex: number) {
+  return addDays(startDate, dayIndex).getMonth() + 1;
+}
+
+function formatDate(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 // --------------------------------------------------
@@ -172,6 +206,9 @@ class SimulationEngine {
   private currentYield: number | null = null;
   private currentCycleWeatherTimeline: WeatherType[] = [];
   private cycleWeatherSequence: WeatherType[] = [];
+  private cycleStartDate: Date = new Date();
+  private firstCycleStartDate: Date = new Date();
+  private lastCompletedCycleStartDate: Date | null = null;
 
   // Welford running stats
   private welfordCount = 0;
@@ -286,6 +323,11 @@ class SimulationEngine {
     if (!isActive) {
       this.params = { ...this.params, ...rest };
       this.pendingParams = {};
+      if (rest.plantingMonth !== undefined) {
+        this.cycleStartDate = new Date(new Date().getFullYear(), rest.plantingMonth - 1, 1);
+        this.firstCycleStartDate = new Date(this.cycleStartDate.getTime());
+        this.lastCompletedCycleStartDate = null;
+      }
     } else if (Object.keys(rest).length > 0) {
       // Defer the rest to next cycle
       this.pendingParams = { ...this.pendingParams, ...rest };
@@ -331,6 +373,9 @@ class SimulationEngine {
     // commit pending
     this.params = { ...this.params, ...this.pendingParams };
     this.pendingParams = {};
+    this.cycleStartDate = new Date(new Date().getFullYear(), this.params.plantingMonth - 1, 1);
+    this.firstCycleStartDate = new Date(this.cycleStartDate.getTime());
+    this.lastCompletedCycleStartDate = null;
   }
 
   private loop = () => {
@@ -369,8 +414,9 @@ class SimulationEngine {
       return;
     }
 
-    const season = getSeason(this.params.plantingMonth);
-    const weather = getWeather(this.params.plantingMonth, this.params.typhoonProbability / 100);
+    const dayIndex = this.currentDay;
+    const month = monthForDay(this.cycleStartDate, dayIndex);
+    const weather = getWeather(month, this.params.typhoonProbability / 100);
     let typhoonSeverity: TyphoonSeverity | null = null;
     if (weather === 'Typhoon') {
       typhoonSeverity = getTyphoonSeverity();
@@ -389,6 +435,7 @@ class SimulationEngine {
 
     if (this.currentDay >= this.params.daysPerCycle) {
       const dominantWeather = this.getDominantWeather();
+      const season = getSeason(this.cycleStartDate.getMonth() + 1);
       this.finalizeCycle(season, dominantWeather);
     }
   }
@@ -410,7 +457,7 @@ class SimulationEngine {
       this.currentDay = this.params.daysPerCycle;
       this.currentCycleWeatherTimeline = [...this.cycleWeatherSequence];
       const dominantWeather = this.getDominantWeather();
-      const season = getSeason(this.params.plantingMonth);
+      const season = getSeason(this.cycleStartDate.getMonth() + 1);
       this.finalizeCycle(season, dominantWeather);
 
       if (this.currentCycleIndex >= this.params.cyclesTarget) {
@@ -445,6 +492,20 @@ class SimulationEngine {
     return Math.min(500, Math.max(200, adjusted));
   }
 
+  private advanceCycleStart(prevDaysPerCycle: number, plantingMonthChanged: boolean) {
+    let nextStart = addDays(this.cycleStartDate, prevDaysPerCycle + GAP_DAYS);
+    if (plantingMonthChanged) {
+      const year = nextStart.getFullYear();
+      const candidate = new Date(year, this.params.plantingMonth - 1, 1);
+      if (candidate.getTime() < nextStart.getTime()) {
+        nextStart = new Date(year + 1, this.params.plantingMonth - 1, 1);
+      } else {
+        nextStart = candidate;
+      }
+    }
+    this.cycleStartDate = nextStart;
+  }
+
   private prepareCycle() {
     const tProb = this.params.typhoonProbability / 100;
     this.cycleWeatherSequence = [];
@@ -452,7 +513,8 @@ class SimulationEngine {
     this.cycleTyphoonSeverityCounts = { Moderate: 0, Severe: 0 };
     this.cycleTyphoonSeveritySequence = [];
     for (let d = 0; d < this.params.daysPerCycle; d++) {
-      const w = getWeather(this.params.plantingMonth, tProb);
+      const month = monthForDay(this.cycleStartDate, d);
+      const w = getWeather(month, tProb);
       this.cycleWeatherSequence.push(w);
       this.cycleWeatherAccum[w]++;
       if (w === 'Typhoon') {
@@ -469,13 +531,18 @@ class SimulationEngine {
   }
 
   private finalizeCycle(season: Season, dominantWeather: WeatherType) {
+    this.lastCompletedCycleStartDate = new Date(this.cycleStartDate.getTime());
     const typhoonDays = this.cycleTyphoonSeverityCounts.Moderate + this.cycleTyphoonSeverityCounts.Severe;
     const dominantTyphoonSeverity =
-      dominantWeather === 'Typhoon' && typhoonDays > 0
+      typhoonDays > 0
         ? (this.cycleTyphoonSeverityCounts.Severe >= this.cycleTyphoonSeverityCounts.Moderate ? 'Severe' : 'Moderate')
         : null;
 
-    const { final: yld, deterministic, noise } = computeYield(dominantWeather, this.params, dominantTyphoonSeverity);
+    const { final: yld, deterministic, noise } = computeYieldFromCounts(
+      this.cycleWeatherAccum,
+      this.cycleTyphoonSeverityCounts,
+      this.params
+    );
     this.currentYield = yld;
 
     this.weatherCounts[dominantWeather]++;
@@ -526,7 +593,7 @@ class SimulationEngine {
       severeTyphoonDays: this.cycleTyphoonSeverityCounts.Severe,
       ensoState: this.params.ensoState,
       irrigationType: this.params.irrigationType,
-      plantingMonth: this.params.plantingMonth,
+      plantingMonth: this.cycleStartDate.getMonth() + 1,
       typhoonProbability: this.params.typhoonProbability,
     };
     this.cycleRecords = [...this.cycleRecords, cycleRecord];
@@ -542,8 +609,11 @@ class SimulationEngine {
     }
 
     // Commit pending params on cycle rollover
+    const prevDaysPerCycle = this.params.daysPerCycle;
+    const prevPlantingMonth = this.params.plantingMonth;
     this.params = { ...this.params, ...this.pendingParams };
     this.pendingParams = {};
+    this.advanceCycleStart(prevDaysPerCycle, this.params.plantingMonth !== prevPlantingMonth);
 
     this.currentCycleIndex++;
     this.currentDay = 0;
@@ -618,6 +688,9 @@ class SimulationEngine {
       currentWeather: this.currentWeather,
       currentYield: this.currentYield,
       currentCycleWeatherTimeline: [...this.currentCycleWeatherTimeline],
+      cycleStartDate: formatDate(this.cycleStartDate),
+      firstCycleStartDate: formatDate(this.firstCycleStartDate),
+      lastCompletedCycleStartDate: this.lastCompletedCycleStartDate ? formatDate(this.lastCompletedCycleStartDate) : null,
 
       runningMean: this.welfordMean,
       runningSd: this.welfordSd(),

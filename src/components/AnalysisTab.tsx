@@ -32,34 +32,55 @@ const ENSO_ADJ: Record<ENSOState, number> = {
   'La Niña': 0.3,
 };
 
+function parseDateOnly(value: string) {
+  const [y, m, d] = value.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+function monthForDay(startMonth: number, dayIndex: number) {
+  const date = new Date(2020, startMonth - 1, 1);
+  date.setDate(date.getDate() + dayIndex);
+  return date.getMonth() + 1;
+}
+
 function expectedYield(params: {
   plantingMonth: number;
   irrigationType: IrrigationType;
   ensoState: ENSOState;
   typhoonProbability: number;
+  daysPerCycle?: number;
 }) {
-  const weights = getWeatherWeights(params.plantingMonth, params.typhoonProbability / 100);
+  const days = params.daysPerCycle ?? 120;
   const severity = getTyphoonSeverityWeights();
-  const typhoonExpected =
-    weights.Typhoon * (
-      TYPHOON_YIELDS.Moderate * severity.Moderate +
-      TYPHOON_YIELDS.Severe * severity.Severe
-    );
-  const base =
-    BASE_YIELDS.Dry * weights.Dry +
-    BASE_YIELDS.Normal * weights.Normal +
-    BASE_YIELDS.Wet * weights.Wet +
-    typhoonExpected;
+  let baseSum = 0;
+  for (let d = 0; d < days; d++) {
+    const month = monthForDay(params.plantingMonth, d);
+    const weights = getWeatherWeights(month, params.typhoonProbability / 100);
+    const typhoonExpected =
+      weights.Typhoon * (
+        TYPHOON_YIELDS.Moderate * severity.Moderate +
+        TYPHOON_YIELDS.Severe * severity.Severe
+      );
+    const dailyBase =
+      BASE_YIELDS.Dry * weights.Dry +
+      BASE_YIELDS.Normal * weights.Normal +
+      BASE_YIELDS.Wet * weights.Wet +
+      typhoonExpected;
+    baseSum += dailyBase;
+  }
+  const base = days > 0 ? baseSum / days : 0;
   const adj = IRRIGATION_ADJ[params.irrigationType] + ENSO_ADJ[params.ensoState];
   return Math.max(0, base + adj);
 }
 
 export default function AnalysisTab() {
   const { snap, viewMode } = useSimulationStore();
-  const { params, runningMean, lowYieldProb, summary, cycleRecords } = snap;
+  const { params, runningMean, lowYieldProb, summary, cycleRecords, cycleStartDate } = snap;
   const isFarmer = viewMode === 'farmer';
 
-  const modelBaseline = useMemo(() => expectedYield(params), [params]);
+  const cycleStartMonth = useMemo(() => parseDateOnly(cycleStartDate).getMonth() + 1, [cycleStartDate]);
+  const baseParams = useMemo(() => ({ ...params, plantingMonth: cycleStartMonth }), [params, cycleStartMonth]);
+  const modelBaseline = useMemo(() => expectedYield(baseParams), [baseParams]);
   const baseline = runningMean > 0 ? runningMean : modelBaseline;
   const calibration = modelBaseline > 0 ? baseline / modelBaseline : 1;
   const formatYieldValue = (value: number) =>
@@ -94,7 +115,7 @@ export default function AnalysisTab() {
 
   const typhoonData = useMemo(() => {
     const common = {
-      plantingMonth: params.plantingMonth,
+      plantingMonth: baseParams.plantingMonth,
       irrigationType: params.irrigationType,
       ensoState: params.ensoState,
     };
@@ -107,7 +128,7 @@ export default function AnalysisTab() {
       'Mid (current)': Number(mid.toFixed(2)),
       'High (35%)': Number(high.toFixed(2)),
     }];
-  }, [calibration, params]);
+  }, [baseParams.plantingMonth, calibration, params.daysPerCycle, params.ensoState, params.irrigationType, params.typhoonProbability]);
   const typhoonNumbers = typhoonData[0];
 
   const compareOptions = useMemo(() => ([
@@ -120,7 +141,7 @@ export default function AnalysisTab() {
 
   const [compareKey, setCompareKey] = useState(compareOptions[0]?.id ?? 'dry-rainfed');
   const comparePreset = compareOptions.find((p) => p.id === compareKey) ?? compareOptions[0];
-  const compareParams = { ...params, ...(comparePreset?.params ?? {}) };
+  const compareParams = { ...baseParams, ...(comparePreset?.params ?? {}) };
   const compareExpected = expectedYield(compareParams) * calibration;
 
   const interpretation = useMemo(() => {
@@ -215,8 +236,8 @@ export default function AnalysisTab() {
     rows.push('Metric,Value');
     rows.push(`Baseline Yield (t/ha),${baseline.toFixed(4)}`);
     rows.push(`Low Yield Risk (%),${(lowYieldProb * 100).toFixed(2)}`);
-    rows.push(`Season,${getSeason(params.plantingMonth)}`);
-    rows.push(`Planting Month,${params.plantingMonth}`);
+    rows.push(`Season,${getSeason(cycleStartMonth)}`);
+    rows.push(`Cycle Start Month,${cycleStartMonth}`);
     rows.push(`Irrigation Type,${params.irrigationType}`);
     rows.push(`ENSO State,${params.ensoState}`);
     rows.push(`Typhoon Probability (%),${params.typhoonProbability.toFixed(1)}`);
@@ -270,7 +291,7 @@ export default function AnalysisTab() {
     a.click();
     URL.revokeObjectURL(url);
   }, [
-    baseline, lowYieldProb, params, irrigationNumbers, ensoNumbers, typhoonNumbers, mcTotals, mcRange,
+    baseline, lowYieldProb, params, cycleStartMonth, irrigationNumbers, ensoNumbers, typhoonNumbers, mcTotals, mcRange,
     compareExpected, comparePreset,
   ]);
 
@@ -297,7 +318,7 @@ export default function AnalysisTab() {
         <CardContent className="text-sm text-muted-foreground space-y-2" style={{ fontFamily: "'Poppins', sans-serif" }}>
           <div>Baseline Yield: <strong>{formatYieldValue(baseline)}</strong></div>
           <div>Low-Yield Risk: <strong>{(lowYieldProb * 100).toFixed(1)}%</strong></div>
-          <div>Season: <strong>{getSeason(params.plantingMonth)}</strong> (Planting Month {params.plantingMonth})</div>
+          <div>Season: <strong>{getSeason(cycleStartMonth)}</strong> (Cycle Start Month {cycleStartMonth})</div>
         </CardContent>
       </Card>
 

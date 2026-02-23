@@ -66,7 +66,7 @@ const SIMULATION_OVERVIEW = [
   {
     title: 'Weather timeline',
     description:
-      'The calendar row shows daily weather. The active cycle uses the actual simulated timeline; other days use a seeded preview based on month and typhoon probability.',
+      'The calendar row shows daily weather across the cycle as months shift. The active cycle uses the actual simulated timeline; other days use a seeded preview based on month and typhoon probability.',
   },
   {
     title: 'Analysis outputs',
@@ -100,6 +100,21 @@ function firstWeekday(year: number, monthIndex: number) {
   return new Date(year, monthIndex, 1).getDay();
 }
 
+function parseDateOnly(value: string) {
+  const [y, m, d] = value.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date.getTime());
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function dateToUtcMs(date: Date) {
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
 function seededWeather(day: number, month: number, year: number, typhoonProb: number) {
   const seed = Math.abs(Math.sin(day * 13 + month * 17 + year * 19) * 10000);
   const r = seed - Math.floor(seed);
@@ -116,31 +131,62 @@ function seededWeather(day: number, month: number, year: number, typhoonProb: nu
 function WeatherTimeline({
   timeline,
   daysPerCycle,
-  plantingMonth,
+  cycleStartDate,
+  firstCycleStartDate,
+  lastCompletedCycleStartDate,
+  isFinished,
+  currentCycleLabel,
   typhoonProbability,
 }: {
   timeline: WeatherType[];
   daysPerCycle: number;
-  plantingMonth: number;
+  cycleStartDate: string;
+  firstCycleStartDate: string;
+  lastCompletedCycleStartDate: string | null;
+  isFinished: boolean;
+  currentCycleLabel: 'P1' | 'P2';
   typhoonProbability: number;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
-  const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth());
+  const startDate = useMemo(() => parseDateOnly(cycleStartDate), [cycleStartDate]);
+  const firstDate = useMemo(() => parseDateOnly(firstCycleStartDate), [firstCycleStartDate]);
+  const lastStartDate = useMemo(
+    () => (lastCompletedCycleStartDate ? parseDateOnly(lastCompletedCycleStartDate) : null),
+    [lastCompletedCycleStartDate]
+  );
+  const maxDate = useMemo(
+    () => (isFinished && lastStartDate ? addDays(lastStartDate, daysPerCycle - 1) : null),
+    [daysPerCycle, isFinished, lastStartDate]
+  );
+  const anchorDate = useMemo(() => {
+    if (isFinished && lastStartDate) {
+      return lastStartDate;
+    }
+    return startDate;
+  }, [isFinished, lastStartDate, startDate]);
+  const anchorYear = anchorDate.getFullYear();
+  const anchorMonthIndex = anchorDate.getMonth();
+  const [calendarYear, setCalendarYear] = useState(() => anchorYear);
+  const [calendarMonth, setCalendarMonth] = useState(() => anchorMonthIndex);
 
   useEffect(() => {
-    setCalendarMonth(Math.max(0, Math.min(11, plantingMonth - 1)));
-  }, [plantingMonth]);
+    setCalendarYear(anchorYear);
+    setCalendarMonth(anchorMonthIndex);
+  }, [anchorMonthIndex, anchorYear]);
 
-  const minYear = new Date().getFullYear();
-  const minMonth = Math.max(0, Math.min(11, plantingMonth - 1));
+  const minDate = isFinished ? firstDate : startDate;
+  const minYear = minDate.getFullYear();
+  const minMonth = minDate.getMonth();
+  const maxYear = maxDate ? maxDate.getFullYear() : null;
+  const maxMonth = maxDate ? maxDate.getMonth() : null;
+  const canUseActual = calendarYear === anchorYear;
 
   const monthName = MONTH_NAMES[calendarMonth];
   const daysInSelectedMonth = daysInMonth(calendarYear, calendarMonth);
-  const useActual = calendarMonth === plantingMonth - 1;
+  const startDay = anchorDate.getDate();
 
   const gapDays = 30;
-  const plantingStart = new Date(calendarYear, plantingMonth - 1, 1);
+  const plantingStart = new Date(calendarYear, anchorMonthIndex, startDay);
   const plantingEnd = new Date(plantingStart);
   plantingEnd.setDate(plantingStart.getDate() + daysPerCycle - 1);
   const plantingSecond = new Date(plantingStart);
@@ -149,11 +195,12 @@ function WeatherTimeline({
   plantingSecondEnd.setDate(plantingSecond.getDate() + daysPerCycle - 1);
 
   const plantingMarkers: Record<number, string> = {};
+  const nextCycleLabel = currentCycleLabel === 'P1' ? 'P2' : 'P1';
   if (plantingStart.getFullYear() === calendarYear && plantingStart.getMonth() === calendarMonth) {
-    plantingMarkers[plantingStart.getDate()] = 'P1';
+    plantingMarkers[plantingStart.getDate()] = currentCycleLabel;
   }
   if (plantingSecond.getFullYear() === calendarYear && plantingSecond.getMonth() === calendarMonth) {
-    plantingMarkers[plantingSecond.getDate()] = 'P2';
+    plantingMarkers[plantingSecond.getDate()] = nextCycleLabel;
   }
 
   const cells = Array.from({ length: daysInSelectedMonth }, (_, i) => {
@@ -167,8 +214,8 @@ function WeatherTimeline({
       return { day, weather: null as WeatherType | null };
     }
 
-    if (useActual && inCycle1) {
-      const dayIndex = day - 1;
+    if (canUseActual && inCycle1) {
+      const dayIndex = Math.floor((dateToUtcMs(currentDate) - dateToUtcMs(plantingStart)) / 86400000);
       const actual = timeline[dayIndex];
       if (actual) {
         return { day, weather: actual };
@@ -184,6 +231,12 @@ function WeatherTimeline({
     const targetYear = calendarMonth === 0 ? calendarYear - 1 : calendarYear;
     return targetYear > minYear || (targetYear === minYear && targetMonth >= minMonth);
   })();
+  const canGoNext = (() => {
+    if (maxYear == null || maxMonth == null) return true;
+    const targetMonth = calendarMonth === 11 ? 0 : calendarMonth + 1;
+    const targetYear = calendarMonth === 11 ? calendarYear + 1 : calendarYear;
+    return targetYear < maxYear || (targetYear === maxYear && targetMonth <= maxMonth);
+  })();
 
   const handlePrev = () => {
     if (!canGoPrev) return;
@@ -194,6 +247,7 @@ function WeatherTimeline({
   };
 
   const handleNext = () => {
+    if (!canGoNext) return;
     setCalendarMonth((prev) => {
       if (prev === 11) {
         setCalendarYear((y) => y + 1);
@@ -228,11 +282,11 @@ function WeatherTimeline({
           </Button>
         </div>
         <p className="text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
-          {monthName} {calendarYear} aligns to the selected planting month. Planting uses two crop cycles with a 30-day rest and land prep gap.
+          {monthName} {calendarYear} aligns to the current cycle start month. Planting uses two crop cycles with a 30-day rest and land prep gap.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex gap-1 overflow-x-auto pb-2">
+        <div className="flex gap-1 overflow-x-auto pb-2 no-scrollbar">
           {cells.map((cell) => (
             <div
               key={cell.day}
@@ -264,7 +318,7 @@ function WeatherTimeline({
                 >
                   {monthName} {calendarYear}
                 </div>
-                <Button size="icon" variant="outline" onClick={handleNext}>
+                <Button size="icon" variant="outline" onClick={handleNext} disabled={!canGoNext}>
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>
@@ -273,14 +327,18 @@ function WeatherTimeline({
                 <Input
                   type="number"
                   min={minYear}
+                  max={maxYear ?? undefined}
                   value={calendarYear}
                   onChange={(e) => {
                     const val = Number(e.target.value);
                     if (Number.isNaN(val)) return;
-                    const nextYear = Math.max(minYear, val);
+                    const nextYear = maxYear == null ? Math.max(minYear, val) : Math.min(maxYear, Math.max(minYear, val));
                     setCalendarYear(nextYear);
                     if (nextYear === minYear) {
                       setCalendarMonth((prev) => (prev < minMonth ? minMonth : prev));
+                    }
+                    if (maxYear != null && maxMonth != null && nextYear === maxYear) {
+                      setCalendarMonth((prev) => (prev > maxMonth ? maxMonth : prev));
                     }
                   }}
                   className="w-20 h-8"
@@ -428,7 +486,7 @@ export default function SimulationTab() {
     currentCycleIndex, currentDay, dayProgress,
     currentWeather, currentYield, runningMean, runningSd, lowYieldProb,
     histogramBins, dailyWeatherCounts, dailyTyphoonSeverityCounts, yieldSeries, yieldBandSeries, yieldHistoryOverTime,
-    currentCycleWeatherTimeline, cycleRecords, summary,
+    currentCycleWeatherTimeline, cycleRecords, summary, cycleStartDate, firstCycleStartDate, lastCompletedCycleStartDate,
   } = snap;
 
   const isRunning = status === 'running';
@@ -455,11 +513,11 @@ export default function SimulationTab() {
           <div className="font-semibold text-foreground">How the simulation works</div>
           <ol className="text-muted-foreground leading-relaxed list-decimal pl-5 space-y-1">
             <li>Start a cycle using the selected planting month, irrigation type, ENSO state, and typhoon probability.</li>
-            <li>Advance day-by-day and draw daily weather from seasonal probabilities for that month.</li>
+            <li>Advance day-by-day and draw daily weather from seasonal probabilities as months shift across the cycle.</li>
             <li>If a typhoon day occurs, assign a severity level (moderate or severe).</li>
-            <li>Compute the cycle yield from a weather baseline, then apply irrigation and ENSO adjustments.</li>
+            <li>Aggregate the daily weather mix into a base yield, then apply irrigation and ENSO adjustments.</li>
             <li>Add a small random noise term to reflect natural variability.</li>
-            <li>After each cycle, update totals, distributions, confidence bands, and risk metrics.</li>
+            <li>After each cycle, advance the calendar by the 30-day rest gap and update totals, distributions, confidence bands, and risk metrics.</li>
           </ol>
         </div>
         <div className="space-y-3">
@@ -491,7 +549,11 @@ export default function SimulationTab() {
 
   const displayParams = { ...params, ...pendingParams };
   const displayCycle = Math.min(currentCycleIndex + (isRunning || isPaused ? 1 : 0), params.cyclesTarget);
+  const cyclePhase = displayCycle <= 0 ? 'P1' : (displayCycle % 2 === 1 ? 'P1' : 'P2');
+  const cycleLabel = `${displayCycle} / ${params.cyclesTarget} (${cyclePhase})`;
   const displayDay = isFinished ? params.daysPerCycle : currentDay;
+  const cycleStart = useMemo(() => parseDateOnly(cycleStartDate), [cycleStartDate]);
+  const cycleStartMonth = cycleStart.getMonth() + 1;
 
   const weatherData = useMemo(() => (
     (Object.keys(dailyWeatherCounts) as WeatherType[]).map((key) => ({
@@ -594,7 +656,7 @@ export default function SimulationTab() {
     if (cycleRecords.length === 0) return;
 
     const rows: string[] = [];
-    rows.push('Cycle,Final Yield (t/ha),Final Yield (sacks),Season,Weather,Dominant Typhoon Severity,Typhoon Days,Severe Typhoon Days,ENSO State,Irrigation Type,Planting Month,Typhoon Probability (%)');
+    rows.push('Cycle,Final Yield (t/ha),Final Yield (sacks),Season,Dominant Weather,Dominant Typhoon Severity,Typhoon Days,Severe Typhoon Days,ENSO State,Irrigation Type,Cycle Start Month,Typhoon Probability (%)');
     cycleRecords.forEach((r) => {
       rows.push([
         r.cycleIndex,
@@ -912,14 +974,14 @@ export default function SimulationTab() {
           {(
             isFarmer
               ? [
-                  { label: 'Cycle', value: `${displayCycle} / ${params.cyclesTarget}` },
+                  { label: 'Cycle', value: cycleLabel },
                   { label: 'Day', value: `${displayDay} / ${params.daysPerCycle}` },
                   { label: 'Current Yield', value: currentYield != null ? formatYieldValue(currentYield) : '---' },
                   { label: 'Running Mean', value: runningMean > 0 ? formatYieldValue(runningMean) : '---' },
                   { label: 'Low Yield Risk', value: `${(lowYieldProb * 100).toFixed(1)}%` },
                 ]
               : [
-                  { label: 'Cycle', value: `${displayCycle} / ${params.cyclesTarget}` },
+                  { label: 'Cycle', value: cycleLabel },
                   { label: 'Day', value: `${displayDay} / ${params.daysPerCycle}` },
                   { label: 'Current Yield', value: currentYield != null ? `${currentYield.toFixed(2)} t/ha` : '---' },
                   { label: 'Running Mean', value: runningMean > 0 ? `${runningMean.toFixed(2)} t/ha` : '---' },
@@ -943,7 +1005,11 @@ export default function SimulationTab() {
         <WeatherTimeline
           timeline={currentCycleWeatherTimeline}
           daysPerCycle={params.daysPerCycle}
-          plantingMonth={params.plantingMonth}
+          cycleStartDate={cycleStartDate}
+          firstCycleStartDate={firstCycleStartDate}
+          lastCompletedCycleStartDate={lastCompletedCycleStartDate}
+          isFinished={isFinished}
+          currentCycleLabel={cyclePhase}
           typhoonProbability={params.typhoonProbability}
         />
 
@@ -967,7 +1033,7 @@ export default function SimulationTab() {
           <h2 style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Parameters</h2>
           <table>
             <tbody>
-              <tr><td>Planting Month</td><td>{params.plantingMonth}</td></tr>
+              <tr><td>Cycle Start Month</td><td>{cycleStartMonth}</td></tr>
               <tr><td>Irrigation</td><td>{params.irrigationType}</td></tr>
               <tr><td>ENSO</td><td>{params.ensoState}</td></tr>
               <tr><td>Typhoon Probability</td><td>{params.typhoonProbability}%</td></tr>

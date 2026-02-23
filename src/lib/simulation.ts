@@ -149,23 +149,53 @@ const ENSO_ADJ: Record<ENSOState, number> = {
   'La Niña': 0.3,
 };
 
+const DAYS_PER_CYCLE = 120;
+
+function monthForDay(startMonth: number, dayIndex: number) {
+  const date = new Date(2020, startMonth - 1, 1);
+  date.setDate(date.getDate() + dayIndex);
+  return date.getMonth() + 1;
+}
+
 export function simulateCycle(
   cycle: number,
   params: SimulationParams
 ): CycleResult {
   const season = getSeason(params.plantingMonth);
-  const weather = getWeather(params.plantingMonth, params.typhoonProbability / 100);
-  const typhoonSeverity = weather === 'Typhoon' ? getTyphoonSeverity() : null;
-  const baseYield = weather === 'Typhoon' && typhoonSeverity
-    ? TYPHOON_YIELDS[typhoonSeverity]
-    : BASE_YIELDS[weather];
+  const weatherCounts: Record<WeatherType, number> = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
+  const typhoonSeverityCounts: Record<TyphoonSeverity, number> = { Moderate: 0, Severe: 0 };
+  for (let d = 0; d < DAYS_PER_CYCLE; d++) {
+    const month = monthForDay(params.plantingMonth, d);
+    const w = getWeather(month, params.typhoonProbability / 100);
+    weatherCounts[w]++;
+    if (w === 'Typhoon') {
+      const severity = getTyphoonSeverity();
+      typhoonSeverityCounts[severity]++;
+    }
+  }
+  const dominantWeather = (Object.keys(weatherCounts) as WeatherType[]).reduce((a, b) =>
+    weatherCounts[a] >= weatherCounts[b] ? a : b
+  );
+  const typhoonDays = typhoonSeverityCounts.Moderate + typhoonSeverityCounts.Severe;
+  const typhoonSeverity = typhoonDays > 0
+    ? (typhoonSeverityCounts.Severe >= typhoonSeverityCounts.Moderate ? 'Severe' : 'Moderate')
+    : null;
+  const unclassifiedTyphoon = Math.max(0, weatherCounts.Typhoon - typhoonSeverityCounts.Moderate - typhoonSeverityCounts.Severe);
+  const baseSum =
+    weatherCounts.Dry * BASE_YIELDS.Dry +
+    weatherCounts.Normal * BASE_YIELDS.Normal +
+    weatherCounts.Wet * BASE_YIELDS.Wet +
+    typhoonSeverityCounts.Moderate * TYPHOON_YIELDS.Moderate +
+    typhoonSeverityCounts.Severe * TYPHOON_YIELDS.Severe +
+    unclassifiedTyphoon * BASE_YIELDS.Typhoon;
+  const baseYield = baseSum / DAYS_PER_CYCLE;
   const adj = IRRIGATION_ADJ[params.irrigationType] + ENSO_ADJ[params.ensoState];
   const noise = normalRandom(0, 0.2);
   const finalYield = Math.max(0, baseYield + adj + noise);
 
   return {
     cycle,
-    weather,
+    weather: dominantWeather,
     season,
     typhoonSeverity,
     baseYield,

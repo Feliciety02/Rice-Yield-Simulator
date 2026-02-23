@@ -112,6 +112,31 @@ def gaussian_noise(mean: float = 0.0, sd: float = 0.2) -> float:
     return random.gauss(mean, sd)
 
 
+def compute_yield_from_counts(
+    weather_counts: Dict[WeatherType, int],
+    typhoon_severity_counts: Dict[TyphoonSeverity, int],
+    params: Dict,
+):
+    total_days = sum(weather_counts.values())
+    moderate = typhoon_severity_counts.get("Moderate", 0)
+    severe = typhoon_severity_counts.get("Severe", 0)
+    unclassified_typhoon = max(0, weather_counts.get("Typhoon", 0) - moderate - severe)
+    base_sum = (
+        weather_counts.get("Dry", 0) * BASE_YIELDS["Dry"]
+        + weather_counts.get("Normal", 0) * BASE_YIELDS["Normal"]
+        + weather_counts.get("Wet", 0) * BASE_YIELDS["Wet"]
+        + moderate * TYPHOON_YIELDS["Moderate"]
+        + severe * TYPHOON_YIELDS["Severe"]
+        + unclassified_typhoon * BASE_YIELDS["Typhoon"]
+    )
+    base = (base_sum / total_days) if total_days > 0 else 0.0
+    adj = IRRIGATION_ADJ[params["irrigationType"]] + ENSO_ADJ[params["ensoState"]]
+    deterministic = base + adj
+    noise = gaussian_noise()
+    final = max(0.0, deterministic + noise)
+    return {"final": final, "deterministic": deterministic, "noise": noise, "base": base}
+
+
 def compute_yield(weather: WeatherType, params: Dict, typhoon_severity: TyphoonSeverity | None):
     base = TYPHOON_YIELDS[typhoon_severity] if weather == "Typhoon" and typhoon_severity else BASE_YIELDS[weather]
     adj = IRRIGATION_ADJ[params["irrigationType"]] + ENSO_ADJ[params["ensoState"]]
