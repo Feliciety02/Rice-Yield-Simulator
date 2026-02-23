@@ -1,73 +1,53 @@
-# Welcome to your Lovable project
+# Rice Yield Simulator
 
-## Project info
+Interactive simulator for Philippine rice yields with configurable weather, ENSO state, irrigation, and typhoon probability. The UI supports day-by-day runs, instant multi-cycle sweeps, and exports for analysis.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+**Features**
+- Configurable planting month, irrigation, ENSO state, typhoon probability, and cycle targets
+- Day-by-day simulation with live weather and crop growth visuals
+- Instant sweep mode for fast multi-cycle statistics
+- Yield charts with distribution, confidence band, and running mean
+- CSV export and printable report
+- Farmer view with plain-language interpretation
 
-## How can I edit this code?
+**Tech Stack**
+- React + TypeScript + Vite
+- Tailwind CSS + shadcn/ui + Radix UI
+- Zustand state management
+- Recharts for data visualization
 
-There are several ways of editing your application.
+**Getting Started (Frontend)**
+1. `npm install`
+2. `npm run dev`
 
-**Use Lovable**
+**Backend (Optional)**
+The `backend/` directory contains a FastAPI service that mirrors the simulation engine. Run it if you want a server API.
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```bash
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# macOS/Linux
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+uvicorn backend.main:app --reload --port 8000
 ```
 
-**Edit a file directly in GitHub**
+**Scripts**
+- `npm run dev` — start the Vite dev server
+- `npm run build` — production build
+- `npm run build:dev` — development-mode build
+- `npm run preview` — preview the production build
+- `npm run lint` — run ESLint
+- `npm run test` — run tests once
+- `npm run test:watch` — run tests in watch mode
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+**Project Structure**
+- `src/components/` — UI components and tabs
+- `src/lib/` — simulation logic and helpers
+- `src/store/` — Zustand simulation store
+- `backend/` — FastAPI server and Python simulation engine
 
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+**Simulation Notes**
+- Stochastic elements: daily weather selection, typhoon severity, and yield noise.
+- Deterministic elements: base yields, irrigation and ENSO adjustments.
