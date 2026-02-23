@@ -196,6 +196,17 @@
 .fade-up-3 { animation-delay: 0.3s; }
 .float-slow { animation: float-slow 12s ease-in-out infinite; }
 
+@layer utilities {
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rain-drop,
   .rice-sway,

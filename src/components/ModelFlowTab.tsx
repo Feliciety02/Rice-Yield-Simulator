@@ -1,3 +1,7 @@
+import { Fragment, useState } from 'react';
+import { ArrowDownUp, ArrowLeftRight } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+
 const steps = [
   { id: 1, label: 'Create Crop Cycle', shape: 'rounded', desc: 'Initialize a new 120-day crop cycle' },
   { id: 2, label: 'Assign Crop Parameters', shape: 'rect', desc: 'Set irrigation, ENSO, planting month' },
@@ -53,6 +57,9 @@ function ShapeBox({ shape, label }: { shape: string; label: string }) {
 }
 
 export default function ModelFlowTab() {
+  const [layout, setLayout] = useState<'vertical' | 'horizontal'>('vertical');
+  const isHorizontal = layout === 'horizontal';
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="text-center space-y-1 mb-8">
@@ -63,19 +70,53 @@ export default function ModelFlowTab() {
       </div>
 
       <div className="rounded-2xl border border-border bg-card p-6 md:p-8">
-        <div className="flex flex-col items-center gap-1">
-          {steps.map((step, i) => (
-            <div key={step.id} className="flex flex-col items-center">
-              <ShapeBox shape={step.shape} label={step.label} />
-              <p className="text-[10px] text-muted-foreground mt-0.5 mb-1 max-w-[200px] text-center">
-                {step.desc}
-              </p>
-              {i < steps.length - 1 && (
-                <div className="w-px h-4 bg-border" />
-              )}
-            </div>
-          ))}
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-xs font-semibold text-muted-foreground">Flow Layout</div>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            onClick={() => setLayout((prev) => (prev === 'vertical' ? 'horizontal' : 'vertical'))}
+            title={isHorizontal ? 'Switch to vertical layout' : 'Switch to horizontal layout'}
+            aria-label={isHorizontal ? 'Switch to vertical layout' : 'Switch to horizontal layout'}
+          >
+            {isHorizontal ? <ArrowDownUp className="w-4 h-4" /> : <ArrowLeftRight className="w-4 h-4" />}
+          </Button>
         </div>
+
+        {layout === 'vertical' ? (
+          <div className="flex flex-col items-center gap-1">
+            {steps.map((step, i) => (
+              <div key={step.id} className="flex flex-col items-center">
+                <ShapeBox shape={step.shape} label={step.label} />
+                <p className="text-[10px] text-muted-foreground mt-0.5 mb-1 max-w-[200px] text-center">
+                  {step.desc}
+                </p>
+                {i < steps.length - 1 && (
+                  <div className="w-px h-4 bg-border" />
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="overflow-x-auto pb-2 no-scrollbar">
+            <div className="flex items-center gap-4 min-w-max">
+              {steps.map((step, i) => (
+                <Fragment key={step.id}>
+                  <div className="flex flex-col items-center">
+                    <ShapeBox shape={step.shape} label={step.label} />
+                    <p className="text-[10px] text-muted-foreground mt-1 max-w-[200px] text-center">
+                      {step.desc}
+                    </p>
+                  </div>
+                  {i < steps.length - 1 && (
+                    <div className="w-8 h-px bg-border shrink-0" />
+                  )}
+                </Fragment>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Legend */}

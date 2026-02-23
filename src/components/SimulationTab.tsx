@@ -451,6 +451,17 @@ export default function SimulationTab() {
           This tab connects the simulation controls to the analysis panels. You configure inputs, run the model,
           and the outputs update the charts, risk summaries, and reports below.
         </p>
+        <div>
+          <div className="font-semibold text-foreground">How the simulation works</div>
+          <ol className="text-muted-foreground leading-relaxed list-decimal pl-5 space-y-1">
+            <li>Start a cycle using the selected planting month, irrigation type, ENSO state, and typhoon probability.</li>
+            <li>Advance day-by-day and draw daily weather from seasonal probabilities for that month.</li>
+            <li>If a typhoon day occurs, assign a severity level (moderate or severe).</li>
+            <li>Compute the cycle yield from a weather baseline, then apply irrigation and ENSO adjustments.</li>
+            <li>Add a small random noise term to reflect natural variability.</li>
+            <li>After each cycle, update totals, distributions, confidence bands, and risk metrics.</li>
+          </ol>
+        </div>
         <div className="space-y-3">
           {SIMULATION_OVERVIEW.map((item) => (
             <div key={item.title} className="flex gap-2">
