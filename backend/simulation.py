@@ -7,12 +7,11 @@ TyphoonSeverity = Literal["Moderate", "Severe"]
 Season = Literal["Dry Season", "Wet Season", "Transition Season"]
 IrrigationType = Literal["Irrigated", "Rainfed"]
 ENSOState = Literal["El Niño", "Neutral", "La Niña"]
-Region = Literal["Luzon", "Visayas", "Mindanao"]
-
-REGION_PROFILE: Dict[Region, Dict] = {
-    "Luzon": {"wetStart": 6, "wetEnd": 10, "typhoonMultiplier": 1.2, "severity": {"Moderate": 0.6, "Severe": 0.4}},
-    "Visayas": {"wetStart": 6, "wetEnd": 10, "typhoonMultiplier": 1.0, "severity": {"Moderate": 0.7, "Severe": 0.3}},
-    "Mindanao": {"wetStart": 5, "wetEnd": 11, "typhoonMultiplier": 0.8, "severity": {"Moderate": 0.8, "Severe": 0.2}},
+DEFAULT_PROFILE: Dict = {
+    "wetStart": 6,
+    "wetEnd": 10,
+    "typhoonMultiplier": 1.2,
+    "severity": {"Moderate": 0.6, "Severe": 0.4},
 }
 
 
@@ -24,8 +23,8 @@ def _wrap_month(month: int) -> int:
     return month
 
 
-def get_season_blend(month: int, region: Region) -> Tuple[float, float, Season]:
-    profile = REGION_PROFILE[region]
+def get_season_blend(month: int) -> Tuple[float, float, Season]:
+    profile = DEFAULT_PROFILE
     in_wet = profile["wetStart"] <= month <= profile["wetEnd"]
     if in_wet:
         return 0.0, 1.0, "Wet Season"
@@ -47,13 +46,13 @@ def get_season_blend(month: int, region: Region) -> Tuple[float, float, Season]:
     return dry_weight, wet_weight, label
 
 
-def get_season(month: int, region: Region = "Luzon") -> Season:
-    return get_season_blend(month, region)[2]
+def get_season(month: int) -> Season:
+    return get_season_blend(month)[2]
 
 
-def get_weather_weights(month: int, typhoon_prob: float, region: Region) -> Dict[WeatherType, float]:
-    profile = REGION_PROFILE[region]
-    dry_weight, wet_weight, _ = get_season_blend(month, region)
+def get_weather_weights(month: int, typhoon_prob: float) -> Dict[WeatherType, float]:
+    profile = DEFAULT_PROFILE
+    dry_weight, wet_weight, _ = get_season_blend(month)
     t_prob = max(0.0, min(0.6, typhoon_prob * profile["typhoonMultiplier"]))
     dry_weights = {"Dry": 0.5, "Normal": 0.4, "Wet": 0.1, "Typhoon": 0.05}
     wet_weights = {"Dry": 0.1, "Normal": 0.4, "Wet": 0.35, "Typhoon": t_prob}
@@ -68,8 +67,8 @@ def get_weather_weights(month: int, typhoon_prob: float, region: Region) -> Dict
     return {k: v / total for k, v in weights.items()}  # type: ignore[return-value]
 
 
-def get_weather(month: int, typhoon_prob: float, region: Region) -> WeatherType:
-    weights = get_weather_weights(month, typhoon_prob, region)
+def get_weather(month: int, typhoon_prob: float) -> WeatherType:
+    weights = get_weather_weights(month, typhoon_prob)
     r = random.random()
     acc = weights["Dry"]
     if r < acc:
@@ -83,14 +82,14 @@ def get_weather(month: int, typhoon_prob: float, region: Region) -> WeatherType:
     return "Typhoon"
 
 
-def get_typhoon_severity(region: Region) -> TyphoonSeverity:
-    weights = REGION_PROFILE[region]["severity"]
+def get_typhoon_severity() -> TyphoonSeverity:
+    weights = DEFAULT_PROFILE["severity"]
     r = random.random()
     return "Severe" if r < weights["Severe"] else "Moderate"
 
 
-def get_typhoon_severity_weights(region: Region) -> Dict[TyphoonSeverity, float]:
-    return REGION_PROFILE[region]["severity"]
+def get_typhoon_severity_weights() -> Dict[TyphoonSeverity, float]:
+    return DEFAULT_PROFILE["severity"]
 
 
 BASE_YIELDS: Dict[WeatherType, float] = {

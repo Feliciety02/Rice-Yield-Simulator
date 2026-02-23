@@ -17,7 +17,6 @@ const initialSnapshot: EngineSnapshot = {
   speedMultiplier: 1,
   params: {
     plantingMonth: 6,
-    region: 'Luzon',
     irrigationType: 'Irrigated',
     ensoState: 'Neutral',
     typhoonProbability: 15,

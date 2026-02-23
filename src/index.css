@@ -174,12 +174,40 @@
   100% { transform: scaleY(1); opacity: 1; }
 }
 
+@keyframes fade-up {
+  0% { opacity: 0; transform: translateY(16px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
 .rain-drop { animation: rain-fall linear infinite; }
 .rice-sway { animation: sway 3s ease-in-out infinite; transform-origin: bottom center; }
 .rice-sway-strong { animation: sway-strong 1s ease-in-out infinite; transform-origin: bottom center; }
 .cloud-move { animation: cloud-drift 20s linear infinite; }
 .sun-glow { animation: sun-pulse 3s ease-in-out infinite; }
 .crop-grow { animation: grow-up 2s ease-out forwards; }
+.fade-up { animation: fade-up 0.8s ease-out both; }
+.fade-up-1 { animation-delay: 0.1s; }
+.fade-up-2 { animation-delay: 0.2s; }
+.fade-up-3 { animation-delay: 0.3s; }
+.float-slow { animation: float-slow 12s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rain-drop,
+  .rice-sway,
+  .rice-sway-strong,
+  .cloud-move,
+  .sun-glow,
+  .crop-grow,
+  .fade-up,
+  .float-slow {
+    animation: none;
+  }
+}
 
 .print-only { display: none; }
 

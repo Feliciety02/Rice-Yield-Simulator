@@ -9,7 +9,7 @@ import { Slider } from '@/components/ui/slider';
 import WeatherScene from './WeatherScene';
 import ChartLegend from './ChartLegend';
 import { useSimulationStore } from '@/store/simulationStore';
-import { IrrigationType, ENSOState, WeatherType, getWeatherWeights, Region } from '@/lib/simulation';
+import { IrrigationType, ENSOState, WeatherType, getWeatherWeights } from '@/lib/simulation';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Cell, LineChart, Line, Area, ComposedChart,
@@ -47,6 +47,39 @@ const TONS_TO_SACKS = 20;
 
 const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
+const SIMULATION_OVERVIEW = [
+  {
+    title: 'Inputs and presets',
+    description:
+      'Set planting month, irrigation type, ENSO state, typhoon probability, and target cycles. Presets apply common scenarios. While a run is active, changes are queued for the next cycle.',
+  },
+  {
+    title: 'Run controls and speed',
+    description:
+      'Start runs day-by-day, or use Instant to sweep cycles quickly. Pause, resume, and reset are available at any time. Speed controls how fast days advance in live mode.',
+  },
+  {
+    title: 'Live model state',
+    description:
+      'Track the current cycle and day, the live weather, current yield estimate, running mean, and low-yield risk. Confidence increases as more cycles complete.',
+  },
+  {
+    title: 'Weather timeline',
+    description:
+      'The calendar row shows daily weather. The active cycle uses the actual simulated timeline; other days use a seeded preview based on month and typhoon probability.',
+  },
+  {
+    title: 'Analysis outputs',
+    description:
+      'Charts summarize yields over cycles with an expected range band (P5 to P95), weather frequency, yield distribution, and the running mean trend over time.',
+  },
+  {
+    title: 'Reporting',
+    description:
+      'Print a formatted report and export CSV with cycle records, summary statistics, and chart data for external analysis.',
+  },
+] as const;
+
 function formatSacks(tons: number) {
   return Math.round(tons * TONS_TO_SACKS);
 }
@@ -67,10 +100,10 @@ function firstWeekday(year: number, monthIndex: number) {
   return new Date(year, monthIndex, 1).getDay();
 }
 
-function seededWeather(day: number, month: number, year: number, region: Region, typhoonProb: number) {
+function seededWeather(day: number, month: number, year: number, typhoonProb: number) {
   const seed = Math.abs(Math.sin(day * 13 + month * 17 + year * 19) * 10000);
   const r = seed - Math.floor(seed);
-  const weights = getWeatherWeights(month, typhoonProb, region);
+  const weights = getWeatherWeights(month, typhoonProb);
   let acc = weights.Dry;
   if (r < acc) return 'Dry' as WeatherType;
   acc += weights.Normal;
@@ -84,13 +117,11 @@ function WeatherTimeline({
   timeline,
   daysPerCycle,
   plantingMonth,
-  region,
   typhoonProbability,
 }: {
   timeline: WeatherType[];
   daysPerCycle: number;
   plantingMonth: number;
-  region: Region;
   typhoonProbability: number;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -144,7 +175,7 @@ function WeatherTimeline({
       }
     }
 
-    const weather = seededWeather(day, calendarMonth + 1, calendarYear, region, typhoonProbability / 100);
+    const weather = seededWeather(day, calendarMonth + 1, calendarYear, typhoonProbability / 100);
     return { day, weather };
   });
 
@@ -406,6 +437,46 @@ export default function SimulationTab() {
   const isIdle = status === 'idle';
   const isFinished = status === 'finished';
   const isFarmer = viewMode === 'farmer';
+  const [activePresetLabel, setActivePresetLabel] = useState<string | null>(null);
+
+  const overviewCard = (
+    <Card className="border-border">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+          Simulation Tab Overview
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm" style={{ fontFamily: "'Poppins', sans-serif" }}>
+        <p className="text-muted-foreground leading-relaxed">
+          This tab connects the simulation controls to the analysis panels. You configure inputs, run the model,
+          and the outputs update the charts, risk summaries, and reports below.
+        </p>
+        <div className="space-y-3">
+          {SIMULATION_OVERVIEW.map((item) => (
+            <div key={item.title} className="flex gap-2">
+              <span className="mt-1 h-2 w-2 rounded-full bg-primary/70 shrink-0" />
+              <div>
+                <div className="font-semibold text-foreground">{item.title}</div>
+                <div className="text-muted-foreground leading-relaxed">{item.description}</div>
+              </div>
+            </div>
+          ))}
+          {isFarmer && (
+            <div className="flex gap-2">
+              <span className="mt-1 h-2 w-2 rounded-full bg-primary/70 shrink-0" />
+              <div>
+                <div className="font-semibold text-foreground">Farmer interpretation</div>
+                <div className="text-muted-foreground leading-relaxed">
+                  In Farmer view, the interpretation card translates model metrics into plain language with
+                  risk context and suggested actions.
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
 
   const displayParams = { ...params, ...pendingParams };
   const displayCycle = Math.min(currentCycleIndex + (isRunning || isPaused ? 1 : 0), params.cyclesTarget);
@@ -512,7 +583,7 @@ export default function SimulationTab() {
     if (cycleRecords.length === 0) return;
 
     const rows: string[] = [];
-    rows.push('Cycle,Final Yield (t/ha),Final Yield (sacks),Season,Weather,Dominant Typhoon Severity,Typhoon Days,Severe Typhoon Days,ENSO State,Irrigation Type,Region,Planting Month,Typhoon Probability (%)');
+    rows.push('Cycle,Final Yield (t/ha),Final Yield (sacks),Season,Weather,Dominant Typhoon Severity,Typhoon Days,Severe Typhoon Days,ENSO State,Irrigation Type,Planting Month,Typhoon Probability (%)');
     cycleRecords.forEach((r) => {
       rows.push([
         r.cycleIndex,
@@ -525,7 +596,6 @@ export default function SimulationTab() {
         r.severeTyphoonDays,
         r.ensoState,
         r.irrigationType,
-        r.region,
         r.plantingMonth,
         r.typhoonProbability.toFixed(1),
       ].join(','));
@@ -701,8 +771,15 @@ export default function SimulationTab() {
             {presets.map((preset) => (
               <button
                 key={preset.label}
-                onClick={() => updateParams(preset.params)}
-                className="text-xs px-2 py-2 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
+                onClick={() => {
+                  setActivePresetLabel(preset.label);
+                  updateParams(preset.params);
+                }}
+                className={`text-xs px-2 py-2 rounded-md border transition-colors ${
+                  activePresetLabel === preset.label
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'border-border text-muted-foreground hover:text-foreground hover:border-primary'
+                }`}
                 style={{ fontFamily: "'Poppins', sans-serif" }}
               >
                 {preset.label}
@@ -803,6 +880,7 @@ export default function SimulationTab() {
     return (
       <div className="flex flex-col items-center gap-6">
         <div className="max-w-md w-full">{controlCard}</div>
+        <div className="max-w-2xl w-full">{overviewCard}</div>
         <div className="text-sm text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
           Press Start to begin a day-by-day run, or Instant for quick cycle sweeps. The engine keeps running when you switch tabs.
         </div>
@@ -855,7 +933,6 @@ export default function SimulationTab() {
           timeline={currentCycleWeatherTimeline}
           daysPerCycle={params.daysPerCycle}
           plantingMonth={params.plantingMonth}
-          region={params.region}
           typhoonProbability={params.typhoonProbability}
         />
 
@@ -880,7 +957,6 @@ export default function SimulationTab() {
           <table>
             <tbody>
               <tr><td>Planting Month</td><td>{params.plantingMonth}</td></tr>
-              <tr><td>Region</td><td>{params.region}</td></tr>
               <tr><td>Irrigation</td><td>{params.irrigationType}</td></tr>
               <tr><td>ENSO</td><td>{params.ensoState}</td></tr>
               <tr><td>Typhoon Probability</td><td>{params.typhoonProbability}%</td></tr>

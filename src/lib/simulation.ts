@@ -3,14 +3,11 @@ export type TyphoonSeverity = 'Moderate' | 'Severe';
 export type Season = 'Dry Season' | 'Wet Season' | 'Transition Season';
 export type IrrigationType = 'Irrigated' | 'Rainfed';
 export type ENSOState = 'El Niño' | 'Neutral' | 'La Niña';
-export type Region = 'Luzon' | 'Visayas' | 'Mindanao';
-
 export interface SimulationParams {
   plantingMonth: number;
   irrigationType: IrrigationType;
   ensoState: ENSOState;
   typhoonProbability: number;
-  region: Region;
   numCycles: number;
 }
 
@@ -23,7 +20,6 @@ export interface CycleResult {
   finalYield: number;
   irrigationType: IrrigationType;
   ensoState: ENSOState;
-  region: Region;
 }
 
 export interface SimulationResults {
@@ -39,10 +35,11 @@ export interface SimulationResults {
   confidenceInterval: [number, number];
 }
 
-const REGION_PROFILE: Record<Region, { wetStart: number; wetEnd: number; typhoonMultiplier: number; severity: Record<TyphoonSeverity, number> }> = {
-  Luzon: { wetStart: 6, wetEnd: 10, typhoonMultiplier: 1.2, severity: { Moderate: 0.6, Severe: 0.4 } },
-  Visayas: { wetStart: 6, wetEnd: 10, typhoonMultiplier: 1.0, severity: { Moderate: 0.7, Severe: 0.3 } },
-  Mindanao: { wetStart: 5, wetEnd: 11, typhoonMultiplier: 0.8, severity: { Moderate: 0.8, Severe: 0.2 } },
+const DEFAULT_PROFILE: { wetStart: number; wetEnd: number; typhoonMultiplier: number; severity: Record<TyphoonSeverity, number> } = {
+  wetStart: 6,
+  wetEnd: 10,
+  typhoonMultiplier: 1.2,
+  severity: { Moderate: 0.6, Severe: 0.4 },
 };
 
 function wrapMonth(month: number) {
@@ -51,8 +48,8 @@ function wrapMonth(month: number) {
   return month;
 }
 
-export function getSeasonBlend(month: number, region: Region) {
-  const profile = REGION_PROFILE[region];
+export function getSeasonBlend(month: number) {
+  const profile = DEFAULT_PROFILE;
   const inWet = month >= profile.wetStart && month <= profile.wetEnd;
   if (inWet) {
     return { dryWeight: 0, wetWeight: 1, label: 'Wet Season' as Season };
@@ -74,8 +71,8 @@ export function getSeasonBlend(month: number, region: Region) {
   return { dryWeight, wetWeight, label };
 }
 
-export function getSeason(month: number, region: Region = 'Luzon'): Season {
-  return getSeasonBlend(month, region).label;
+export function getSeason(month: number): Season {
+  return getSeasonBlend(month).label;
 }
 
 function normalRandom(mean: number, stdDev: number): number {
@@ -85,9 +82,9 @@ function normalRandom(mean: number, stdDev: number): number {
   return mean + stdDev * Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
 
-export function getWeatherWeights(month: number, typhoonProb: number, region: Region) {
-  const profile = REGION_PROFILE[region];
-  const blend = getSeasonBlend(month, region);
+export function getWeatherWeights(month: number, typhoonProb: number) {
+  const profile = DEFAULT_PROFILE;
+  const blend = getSeasonBlend(month);
   const tProb = Math.max(0, Math.min(0.6, typhoonProb * profile.typhoonMultiplier));
   const dryWeights = { Dry: 0.5, Normal: 0.4, Wet: 0.1, Typhoon: 0.05 };
   const wetWeights = { Dry: 0.1, Normal: 0.4, Wet: 0.35, Typhoon: tProb };
@@ -107,8 +104,8 @@ export function getWeatherWeights(month: number, typhoonProb: number, region: Re
   };
 }
 
-export function getWeather(month: number, typhoonProb: number, region: Region): WeatherType {
-  const weights = getWeatherWeights(month, typhoonProb, region);
+export function getWeather(month: number, typhoonProb: number): WeatherType {
+  const weights = getWeatherWeights(month, typhoonProb);
   const r = Math.random();
   let acc = weights.Dry;
   if (r < acc) return 'Dry';
@@ -119,14 +116,14 @@ export function getWeather(month: number, typhoonProb: number, region: Region): 
   return 'Typhoon';
 }
 
-export function getTyphoonSeverity(region: Region): TyphoonSeverity {
-  const weights = REGION_PROFILE[region].severity;
+export function getTyphoonSeverity(): TyphoonSeverity {
+  const weights = DEFAULT_PROFILE.severity;
   const r = Math.random();
   return r < weights.Severe ? 'Severe' : 'Moderate';
 }
 
-export function getTyphoonSeverityWeights(region: Region) {
-  return REGION_PROFILE[region].severity;
+export function getTyphoonSeverityWeights() {
+  return DEFAULT_PROFILE.severity;
 }
 
 const BASE_YIELDS: Record<WeatherType, number> = {
@@ -156,9 +153,9 @@ export function simulateCycle(
   cycle: number,
   params: SimulationParams
 ): CycleResult {
-  const season = getSeason(params.plantingMonth, params.region);
-  const weather = getWeather(params.plantingMonth, params.typhoonProbability / 100, params.region);
-  const typhoonSeverity = weather === 'Typhoon' ? getTyphoonSeverity(params.region) : null;
+  const season = getSeason(params.plantingMonth);
+  const weather = getWeather(params.plantingMonth, params.typhoonProbability / 100);
+  const typhoonSeverity = weather === 'Typhoon' ? getTyphoonSeverity() : null;
   const baseYield = weather === 'Typhoon' && typhoonSeverity
     ? TYPHOON_YIELDS[typhoonSeverity]
     : BASE_YIELDS[weather];
@@ -175,7 +172,6 @@ export function simulateCycle(
     finalYield,
     irrigationType: params.irrigationType,
     ensoState: params.ensoState,
-    region: params.region,
   };
 }
 

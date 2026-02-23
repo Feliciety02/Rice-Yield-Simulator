@@ -9,7 +9,6 @@ from .simulation import (
     IrrigationType,
     ENSOState,
     Season,
-    Region,
     get_season,
     get_weather,
     get_typhoon_severity,
@@ -30,7 +29,6 @@ class SimulationEngine:
 
         self.params = {
             "plantingMonth": 6,
-            "region": "Luzon",
             "irrigationType": "Irrigated",
             "ensoState": "Neutral",
             "typhoonProbability": 15,
@@ -211,11 +209,11 @@ class SimulationEngine:
             self._finish()
             return
 
-        season = get_season(self.params["plantingMonth"], self.params["region"])
-        weather = get_weather(self.params["plantingMonth"], self.params["typhoonProbability"] / 100, self.params["region"])
+        season = get_season(self.params["plantingMonth"])
+        weather = get_weather(self.params["plantingMonth"], self.params["typhoonProbability"] / 100)
         typhoon_severity = None
         if weather == "Typhoon":
-            typhoon_severity = get_typhoon_severity(self.params["region"])
+            typhoon_severity = get_typhoon_severity()
             self.cycleTyphoonSeverityCounts[typhoon_severity] += 1
             self.dailyTyphoonSeverityCounts[typhoon_severity] += 1
 
@@ -246,7 +244,7 @@ class SimulationEngine:
             self.currentDay = self.params["daysPerCycle"]
             self.currentCycleWeatherTimeline = list(self.cycleWeatherSequence)
             dominant = self._get_dominant_weather()
-            season = get_season(self.params["plantingMonth"], self.params["region"])
+            season = get_season(self.params["plantingMonth"])
             self._finalize_cycle(season, dominant)
 
             if self.currentCycleIndex >= self.params["cyclesTarget"]:
@@ -276,11 +274,11 @@ class SimulationEngine:
         self.cycleWeatherAccum = {"Dry": 0, "Normal": 0, "Wet": 0, "Typhoon": 0}
         self.cycleTyphoonSeverityCounts = {"Moderate": 0, "Severe": 0}
         for _ in range(self.params["daysPerCycle"]):
-            w = get_weather(self.params["plantingMonth"], t_prob, self.params["region"])
+            w = get_weather(self.params["plantingMonth"], t_prob)
             self.cycleWeatherSequence.append(w)
             self.cycleWeatherAccum[w] += 1
             if w == "Typhoon":
-                severity = get_typhoon_severity(self.params["region"])
+                severity = get_typhoon_severity()
                 self.cycleTyphoonSeverityCounts[severity] += 1
         self.currentDay = 0
         self.currentWeather = self.cycleWeatherSequence[0] if self.cycleWeatherSequence else None
@@ -348,7 +346,6 @@ class SimulationEngine:
             "severeTyphoonDays": self.cycleTyphoonSeverityCounts["Severe"],
             "ensoState": self.params["ensoState"],
             "irrigationType": self.params["irrigationType"],
-            "region": self.params["region"],
             "plantingMonth": self.params["plantingMonth"],
             "typhoonProbability": self.params["typhoonProbability"],
         }

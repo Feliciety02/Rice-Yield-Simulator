@@ -7,7 +7,6 @@
   IrrigationType,
   ENSOState,
   Season,
-  Region,
 } from './simulation';
 
 // --------------------------------------------------
@@ -17,7 +16,6 @@ export type SimMode = 'day' | 'cycle';
 
 export interface EngineParams {
   plantingMonth: number;       // 1-12
-  region: Region;
   irrigationType: IrrigationType;
   ensoState: ENSOState;
   typhoonProbability: number;  // 0-40 (%)
@@ -41,7 +39,6 @@ export interface CycleRecord {
   severeTyphoonDays: number;
   ensoState: ENSOState;
   irrigationType: IrrigationType;
-  region: Region;
   plantingMonth: number;
   typhoonProbability: number;
 }
@@ -160,7 +157,6 @@ class SimulationEngine {
 
   private params: EngineParams = {
     plantingMonth: 6,
-    region: 'Luzon',
     irrigationType: 'Irrigated',
     ensoState: 'Neutral',
     typhoonProbability: 15,
@@ -373,11 +369,11 @@ class SimulationEngine {
       return;
     }
 
-    const season = getSeason(this.params.plantingMonth, this.params.region);
-    const weather = getWeather(this.params.plantingMonth, this.params.typhoonProbability / 100, this.params.region);
+    const season = getSeason(this.params.plantingMonth);
+    const weather = getWeather(this.params.plantingMonth, this.params.typhoonProbability / 100);
     let typhoonSeverity: TyphoonSeverity | null = null;
     if (weather === 'Typhoon') {
-      typhoonSeverity = getTyphoonSeverity(this.params.region);
+      typhoonSeverity = getTyphoonSeverity();
       this.cycleTyphoonSeverityCounts[typhoonSeverity]++;
       this.dailyTyphoonSeverityCounts[typhoonSeverity]++;
     }
@@ -414,7 +410,7 @@ class SimulationEngine {
       this.currentDay = this.params.daysPerCycle;
       this.currentCycleWeatherTimeline = [...this.cycleWeatherSequence];
       const dominantWeather = this.getDominantWeather();
-      const season = getSeason(this.params.plantingMonth, this.params.region);
+      const season = getSeason(this.params.plantingMonth);
       this.finalizeCycle(season, dominantWeather);
 
       if (this.currentCycleIndex >= this.params.cyclesTarget) {
@@ -456,11 +452,11 @@ class SimulationEngine {
     this.cycleTyphoonSeverityCounts = { Moderate: 0, Severe: 0 };
     this.cycleTyphoonSeveritySequence = [];
     for (let d = 0; d < this.params.daysPerCycle; d++) {
-      const w = getWeather(this.params.plantingMonth, tProb, this.params.region);
+      const w = getWeather(this.params.plantingMonth, tProb);
       this.cycleWeatherSequence.push(w);
       this.cycleWeatherAccum[w]++;
       if (w === 'Typhoon') {
-        const severity = getTyphoonSeverity(this.params.region);
+        const severity = getTyphoonSeverity();
         this.cycleTyphoonSeverityCounts[severity]++;
         this.cycleTyphoonSeveritySequence.push(severity);
       } else {
@@ -530,7 +526,6 @@ class SimulationEngine {
       severeTyphoonDays: this.cycleTyphoonSeverityCounts.Severe,
       ensoState: this.params.ensoState,
       irrigationType: this.params.irrigationType,
-      region: this.params.region,
       plantingMonth: this.params.plantingMonth,
       typhoonProbability: this.params.typhoonProbability,
     };
