@@ -127,7 +127,7 @@ export default function AnalysisTab() {
       'Mid (current)': Number(mid.toFixed(2)),
       'High (35%)': Number(high.toFixed(2)),
     }];
-  }, [baseParams.plantingMonth, calibration, params.daysPerCycle, params.ensoState, params.irrigationType, params.typhoonProbability]);
+  }, [baseParams.plantingMonth, calibration, params.ensoState, params.irrigationType, params.typhoonProbability]);
   const typhoonNumbers = typhoonData[0];
 
   const interpretation = useMemo(() => {
