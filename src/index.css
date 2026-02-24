@@ -12,6 +12,10 @@
     --card: 140 15% 99%;
     --card-foreground: 160 30% 10%;
 
+    --surface: 140 24% 96%;
+    --surface-foreground: 160 30% 10%;
+    --surface-muted: 140 18% 92%;
+
     --popover: 140 15% 99%;
     --popover-foreground: 160 30% 10%;
 
@@ -33,6 +37,12 @@
     --border: 155 15% 88%;
     --input: 155 15% 88%;
     --ring: 160 65% 18%;
+    --ring-soft: 152 35% 82%;
+
+    --weather-dry: 40 70% 58%;
+    --weather-normal: 150 18% 52%;
+    --weather-wet: 175 45% 45%;
+    --weather-typhoon: 0 55% 46%;
 
     --radius: 1rem;
 
@@ -75,6 +85,10 @@
     --card: 160 18% 9%;
     --card-foreground: 0 0% 93%;
 
+    --surface: 160 16% 12%;
+    --surface-foreground: 0 0% 93%;
+    --surface-muted: 160 12% 16%;
+
     --popover: 160 18% 9%;
     --popover-foreground: 0 0% 93%;
 
@@ -96,6 +110,12 @@
     --border: 155 10% 16%;
     --input: 155 10% 16%;
     --ring: 152 55% 40%;
+    --ring-soft: 152 25% 24%;
+
+    --weather-dry: 40 60% 52%;
+    --weather-normal: 150 18% 42%;
+    --weather-wet: 175 35% 40%;
+    --weather-typhoon: 0 45% 40%;
 
     --sidebar-background: 160 20% 5%;
     --sidebar-foreground: 0 0% 93%;

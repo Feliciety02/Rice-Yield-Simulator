@@ -1,7 +1,6 @@
-﻿import { useCallback, useMemo, useState } from 'react';
+﻿import { useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import ChartLegend from './ChartLegend';
 import { useSimulationStore } from '@/store/simulationStore';
 import { getSeason, getWeatherWeights, getTyphoonSeverityWeights, IrrigationType, ENSOState, WeatherType, TyphoonSeverity } from '@/lib/simulation';
@@ -130,19 +129,6 @@ export default function AnalysisTab() {
     }];
   }, [baseParams.plantingMonth, calibration, params.daysPerCycle, params.ensoState, params.irrigationType, params.typhoonProbability]);
   const typhoonNumbers = typhoonData[0];
-
-  const compareOptions = useMemo(() => ([
-    { id: 'dry-rainfed', label: 'Dry Season Rainfed', params: { plantingMonth: 2, irrigationType: 'Rainfed' as IrrigationType, ensoState: 'Neutral' as ENSOState, typhoonProbability: 5 } },
-    { id: 'wet-irrigated', label: 'Wet Season Irrigated', params: { plantingMonth: 7, irrigationType: 'Irrigated' as IrrigationType, ensoState: 'Neutral' as ENSOState, typhoonProbability: 15 } },
-    { id: 'high-typhoon', label: 'High Typhoon', params: { typhoonProbability: 35 } },
-    { id: 'la-nina', label: 'La Niña Boost', params: { ensoState: 'La Niña' as ENSOState } },
-    { id: 'el-nino', label: 'El Niño Stress', params: { ensoState: 'El Niño' as ENSOState } },
-  ]), []);
-
-  const [compareKey, setCompareKey] = useState(compareOptions[0]?.id ?? 'dry-rainfed');
-  const comparePreset = compareOptions.find((p) => p.id === compareKey) ?? compareOptions[0];
-  const compareParams = { ...baseParams, ...(comparePreset?.params ?? {}) };
-  const compareExpected = expectedYield(compareParams) * calibration;
 
   const interpretation = useMemo(() => {
     const riskPct = (lowYieldProb * 100).toFixed(1);
@@ -275,13 +261,6 @@ export default function AnalysisTab() {
       rows.push(`Mean (t/ha),${mcRange.mean.toFixed(4)}`);
     }
 
-    rows.push('');
-    rows.push('Scenario Compare');
-    rows.push('Scenario,Yield (t/ha)');
-    rows.push(`Current,${baseline.toFixed(4)}`);
-    rows.push(`${comparePreset?.label ?? 'Preset'},${compareExpected.toFixed(4)}`);
-    rows.push(`Delta,${(compareExpected - baseline).toFixed(4)}`);
-
     const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -292,7 +271,6 @@ export default function AnalysisTab() {
     URL.revokeObjectURL(url);
   }, [
     baseline, lowYieldProb, params, cycleStartMonth, irrigationNumbers, ensoNumbers, typhoonNumbers, mcTotals, mcRange,
-    compareExpected, comparePreset,
   ]);
 
   return (
@@ -369,32 +347,6 @@ export default function AnalysisTab() {
           </div>
           <div className="text-xs text-muted-foreground">
             Based on {mcTotals.total} completed cycles from the live simulation.
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-border">
-        <CardHeader>
-          <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Scenario Compare</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3" style={{ fontFamily: "'Poppins', sans-serif" }}>
-          <div className="text-sm text-muted-foreground">
-            Compare the current run against a preset scenario (no separate simulation is run).
-          </div>
-          <Select value={comparePreset?.id ?? compareKey} onValueChange={setCompareKey}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {compareOptions.map((opt) => (
-                <SelectItem key={opt.id} value={opt.id} style={{ fontFamily: "'Poppins', sans-serif" }}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <div className="grid grid-cols-2 gap-2 text-sm text-muted-foreground">
-            <div>Current: <strong>{formatYieldValue(baseline)}</strong></div>
-            <div>{comparePreset?.label ?? 'Preset'}: <strong>{formatYieldValue(compareExpected)}</strong></div>
-            <div>Delta: <strong>{formatYieldValue(compareExpected - baseline)}</strong></div>
           </div>
         </CardContent>
       </Card>
@@ -515,3 +467,4 @@ export default function AnalysisTab() {
     </div>
   );
 }
+

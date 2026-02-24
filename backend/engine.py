@@ -47,6 +47,8 @@ class SimulationEngine:
         self.currentYield: Optional[float] = None
         self.currentCycleWeatherTimeline: List[WeatherType] = []
         self.currentCycleTyphoonSeverityTimeline: List[Optional[TyphoonSeverity]] = []
+        self.lastCompletedCycleWeatherTimeline: List[WeatherType] = []
+        self.lastCompletedCycleTyphoonSeverityTimeline: List[Optional[TyphoonSeverity]] = []
         self.cycleWeatherSequence: List[WeatherType] = []
         self.cycleTyphoonSeveritySequence: List[Optional[TyphoonSeverity]] = []
         self.cycleStartDate: date = date.today().replace(month=self.params["plantingMonth"], day=1)
@@ -158,6 +160,8 @@ class SimulationEngine:
         self.currentYield = None
         self.currentCycleWeatherTimeline = []
         self.currentCycleTyphoonSeverityTimeline = []
+        self.lastCompletedCycleWeatherTimeline = []
+        self.lastCompletedCycleTyphoonSeverityTimeline = []
         self.cycleWeatherSequence = []
         self.cycleTyphoonSeveritySequence = []
 
@@ -320,6 +324,16 @@ class SimulationEngine:
 
     def _finalize_cycle(self, season: Season, dominant_weather: WeatherType):
         self.lastCompletedCycleStartDate = self.cycleStartDate
+        self.lastCompletedCycleWeatherTimeline = (
+            list(self.currentCycleWeatherTimeline)
+            if self.currentCycleWeatherTimeline
+            else list(self.cycleWeatherSequence)
+        )
+        self.lastCompletedCycleTyphoonSeverityTimeline = (
+            list(self.currentCycleTyphoonSeverityTimeline)
+            if self.currentCycleTyphoonSeverityTimeline
+            else list(self.cycleTyphoonSeveritySequence)
+        )
         typhoon_days = self.cycleTyphoonSeverityCounts["Moderate"] + self.cycleTyphoonSeverityCounts["Severe"]
         dominant_severity = None
         if typhoon_days > 0:
@@ -469,6 +483,8 @@ class SimulationEngine:
             "currentYield": self.currentYield,
             "currentCycleWeatherTimeline": list(self.currentCycleWeatherTimeline),
             "currentCycleTyphoonSeverityTimeline": list(self.currentCycleTyphoonSeverityTimeline),
+            "lastCompletedCycleWeatherTimeline": list(self.lastCompletedCycleWeatherTimeline),
+            "lastCompletedCycleTyphoonSeverityTimeline": list(self.lastCompletedCycleTyphoonSeverityTimeline),
             "cycleStartDate": self.cycleStartDate.isoformat(),
             "firstCycleStartDate": self.firstCycleStartDate.isoformat(),
             "lastCompletedCycleStartDate": self.lastCompletedCycleStartDate.isoformat() if self.lastCompletedCycleStartDate else None,

@@ -41,6 +41,8 @@ const initialSnapshot: EngineSnapshot = {
   currentYield: null,
   currentCycleWeatherTimeline: [],
   currentCycleTyphoonSeverityTimeline: [],
+  lastCompletedCycleWeatherTimeline: [],
+  lastCompletedCycleTyphoonSeverityTimeline: [],
   cycleStartDate: formatDate(initialCycleStartDate),
   firstCycleStartDate: formatDate(initialCycleStartDate),
   lastCompletedCycleStartDate: null,

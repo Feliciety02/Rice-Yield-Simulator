@@ -61,6 +61,8 @@ export interface EngineSnapshot {
   currentYield: number | null;
   currentCycleWeatherTimeline: WeatherType[];
   currentCycleTyphoonSeverityTimeline: (TyphoonSeverity | null)[];
+  lastCompletedCycleWeatherTimeline: WeatherType[];
+  lastCompletedCycleTyphoonSeverityTimeline: (TyphoonSeverity | null)[];
   cycleStartDate: string;
   firstCycleStartDate: string;
   lastCompletedCycleStartDate: string | null;
@@ -207,6 +209,8 @@ class SimulationEngine {
   private currentYield: number | null = null;
   private currentCycleWeatherTimeline: WeatherType[] = [];
   private currentCycleTyphoonSeverityTimeline: (TyphoonSeverity | null)[] = [];
+  private lastCompletedCycleWeatherTimeline: WeatherType[] = [];
+  private lastCompletedCycleTyphoonSeverityTimeline: (TyphoonSeverity | null)[] = [];
   private cycleWeatherSequence: WeatherType[] = [];
   private cycleStartDate: Date = new Date();
   private firstCycleStartDate: Date = new Date();
@@ -346,6 +350,8 @@ class SimulationEngine {
     this.currentYield = null;
     this.currentCycleWeatherTimeline = [];
     this.currentCycleTyphoonSeverityTimeline = [];
+    this.lastCompletedCycleWeatherTimeline = [];
+    this.lastCompletedCycleTyphoonSeverityTimeline = [];
     this.cycleWeatherSequence = [];
     this.welfordCount = 0;
     this.welfordMean = 0;
@@ -542,6 +548,12 @@ class SimulationEngine {
 
   private finalizeCycle(season: Season, dominantWeather: WeatherType) {
     this.lastCompletedCycleStartDate = new Date(this.cycleStartDate.getTime());
+    this.lastCompletedCycleWeatherTimeline = this.currentCycleWeatherTimeline.length > 0
+      ? [...this.currentCycleWeatherTimeline]
+      : [...this.cycleWeatherSequence];
+    this.lastCompletedCycleTyphoonSeverityTimeline = this.currentCycleTyphoonSeverityTimeline.length > 0
+      ? [...this.currentCycleTyphoonSeverityTimeline]
+      : [...this.cycleTyphoonSeveritySequence];
     const typhoonDays = this.cycleTyphoonSeverityCounts.Moderate + this.cycleTyphoonSeverityCounts.Severe;
     const dominantTyphoonSeverity =
       typhoonDays > 0
@@ -700,6 +712,8 @@ class SimulationEngine {
       currentYield: this.currentYield,
       currentCycleWeatherTimeline: [...this.currentCycleWeatherTimeline],
       currentCycleTyphoonSeverityTimeline: [...this.currentCycleTyphoonSeverityTimeline],
+      lastCompletedCycleWeatherTimeline: [...this.lastCompletedCycleWeatherTimeline],
+      lastCompletedCycleTyphoonSeverityTimeline: [...this.lastCompletedCycleTyphoonSeverityTimeline],
       cycleStartDate: formatDate(this.cycleStartDate),
       firstCycleStartDate: formatDate(this.firstCycleStartDate),
       lastCompletedCycleStartDate: this.lastCompletedCycleStartDate ? formatDate(this.lastCompletedCycleStartDate) : null,

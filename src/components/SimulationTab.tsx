@@ -1,5 +1,36 @@
-﻿import { useCallback, useMemo, useState, useEffect } from 'react';
-import { Play, Pause, RotateCcw, Download, Zap, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Sun, Cloud, CloudRain, Tornado, Printer } from 'lucide-react';
+﻿import { useCallback, useMemo, useState, useEffect, useRef, type ReactNode } from 'react';
+import {
+  Play,
+  Pause,
+  RotateCcw,
+  Download,
+  Zap,
+  Printer,
+  ChevronDown,
+  ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  Sun,
+  Cloud,
+  CloudRain,
+  Tornado,
+  CalendarDays,
+  Gauge,
+  Leaf,
+  Sparkles,
+  ShieldCheck,
+  AlertTriangle,
+  Layers,
+  Timer,
+  Wind,
+  Settings2,
+  BadgeCheck,
+  X,
+  FileText,
+  TrendingUp,
+  TrendingDown,
+  Activity,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -21,28 +52,31 @@ const MONTH_NAMES = [
 ];
 
 const WEATHER_COLORS: Record<WeatherType, string> = {
-  Dry: 'hsl(45, 95%, 55%)',
-  Normal: 'hsl(200, 60%, 55%)',
-  Wet: 'hsl(210, 60%, 50%)',
-  Typhoon: 'hsl(0, 72%, 50%)',
+  Dry: 'hsl(var(--weather-dry))',
+  Normal: 'hsl(var(--weather-normal))',
+  Wet: 'hsl(var(--weather-wet))',
+  Typhoon: 'hsl(var(--weather-typhoon))',
 };
 
 const WEATHER_BG: Record<WeatherType, string> = {
-  Dry: 'hsla(45, 95%, 55%, 0.2)',
-  Normal: 'hsla(200, 60%, 55%, 0.2)',
-  Wet: 'hsla(210, 60%, 50%, 0.2)',
-  Typhoon: 'hsla(0, 72%, 50%, 0.2)',
+  Dry: 'hsl(var(--weather-dry) / 0.18)',
+  Normal: 'hsl(var(--weather-normal) / 0.18)',
+  Wet: 'hsl(var(--weather-wet) / 0.18)',
+  Typhoon: 'hsl(var(--weather-typhoon) / 0.18)',
 };
 
 const TYPHOON_SEVERITY_COLORS: Record<TyphoonSeverity, string> = {
-  Moderate: 'hsl(35, 90%, 55%)',
-  Severe: 'hsl(0, 80%, 55%)',
+  Moderate: 'hsl(var(--warning))',
+  Severe: 'hsl(var(--destructive))',
 };
 
 const YIELD_COLOR = 'hsl(var(--primary))';
-const BAND_FILL = 'hsl(var(--primary) / 0.2)';
-const BAND_LEGEND = 'hsl(var(--primary) / 0.45)';
-const MEAN_COLOR = 'hsl(var(--accent))';
+const BAND_FILL = 'hsl(var(--chart-2) / 0.2)';
+const BAND_LEGEND = 'hsl(var(--chart-2) / 0.55)';
+const MEAN_COLOR = 'hsl(var(--chart-3))';
+
+const CARD_CLASS = 'rounded-2xl border-0 ring-1 ring-border/70 shadow-[0_20px_45px_-30px_hsl(var(--primary)/0.45)] bg-card/95';
+const CARD_SOFT_CLASS = 'rounded-2xl border-0 ring-1 ring-border/60 bg-surface/70';
 
 const SPEED_LABELS: Record<number, string> = {
   0.5: '0.5x', 1: '1x', 2: '2x', 5: '5x', 10: '10x', 20: '20x',
@@ -84,6 +118,190 @@ const SIMULATION_OVERVIEW = [
       'Print a formatted report and export CSV with cycle records, summary statistics, and chart data for external analysis.',
   },
 ] as const;
+
+const TOOLTIP_STYLE = {
+  backgroundColor: 'hsl(var(--card))',
+  border: '1px solid hsl(var(--ring-soft))',
+  borderRadius: 12,
+  fontFamily: 'Poppins, sans-serif',
+  fontSize: 12,
+  color: 'hsl(var(--foreground))',
+};
+
+type MetricItem = {
+  label: string;
+  value: ReactNode;
+  icon: ReactNode;
+  helper?: string;
+};
+
+type InsightTone = 'default' | 'up' | 'down' | 'steady';
+
+type ControlParams = {
+  plantingMonth: number;
+  irrigationType: IrrigationType;
+  ensoState: ENSOState;
+  typhoonProbability: number;
+  cyclesTarget: number;
+  daysPerCycle: number;
+};
+
+function StatusChip({ tone, label }: { tone: 'queued' | 'live' | 'info'; label: string }) {
+  const cls =
+    tone === 'queued'
+      ? 'bg-warning/15 text-warning'
+      : tone === 'live'
+      ? 'bg-primary/10 text-primary'
+      : 'bg-muted text-muted-foreground';
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
+function ControlGroup({
+  title,
+  subtitle,
+  icon,
+  badge,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: ReactNode;
+  badge?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl bg-surface/80 ring-1 ring-border/60 p-4 space-y-4">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          {icon}
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-foreground" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              {title}
+            </div>
+            {badge}
+          </div>
+          <div className="text-[11px] text-muted-foreground">{subtitle}</div>
+        </div>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </div>
+  );
+}
+
+function MetricGrid({ items }: { items: MetricItem[] }) {
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {items.map((item) => (
+        <Card key={item.label} className="rounded-2xl border-0 ring-1 ring-border/60 bg-surface/80 shadow-none">
+          <CardContent className="pt-4 pb-3 h-24 flex flex-col justify-between">
+            <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+              <span>{item.label}</span>
+              <span className="text-primary/60">{item.icon}</span>
+            </div>
+            <div
+              className="mt-2 text-base md:text-lg font-semibold text-foreground leading-tight max-h-10 overflow-hidden"
+              style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+            >
+              {item.value}
+            </div>
+            {item.helper && (
+              <div className="text-[10px] text-muted-foreground mt-1">{item.helper}</div>
+            )}
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function InsightLine({ tone, children }: { tone: InsightTone; children: ReactNode }) {
+  const toneClass =
+    tone === 'up'
+      ? 'text-primary'
+      : tone === 'down'
+      ? 'text-destructive'
+      : tone === 'steady'
+      ? 'text-warning'
+      : 'text-muted-foreground';
+  return (
+    <div className={`text-xs ${toneClass} flex items-center gap-2`}>
+      {children}
+    </div>
+  );
+}
+
+function ChartCard({
+  title,
+  caption,
+  insight,
+  children,
+}: {
+  title: string;
+  caption?: string;
+  insight?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <Card className={CARD_CLASS}>
+      <CardHeader className="pb-2">
+        <div className="flex items-start justify-between gap-3">
+          <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            {title}
+          </CardTitle>
+          {caption && <div className="text-[11px] text-muted-foreground">{caption}</div>}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {children}
+        {insight}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReportActions({
+  isFinished,
+  onPrint,
+  onExport,
+}: {
+  isFinished: boolean;
+  onPrint: () => void;
+  onExport: () => void;
+}) {
+  return (
+    <Card className={CARD_SOFT_CLASS}>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            Report Actions
+          </CardTitle>
+          <FileText className="w-4 h-4 text-primary/70" />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={onPrint} variant="outline" className="gap-2">
+            <Printer className="w-4 h-4" /> Print Report
+          </Button>
+          <Button onClick={onExport} variant="outline" className="gap-2" disabled={!isFinished}>
+            <Download className="w-4 h-4" /> Export CSV
+          </Button>
+        </div>
+        {!isFinished && (
+          <div className="text-[11px] text-muted-foreground">
+            Export unlocks after the run finishes so the full dataset is available.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function formatSacks(tons: number) {
   return Math.round(tons * TONS_TO_SACKS);
@@ -133,7 +351,7 @@ function seededWeather(day: number, month: number, year: number, typhoonProb: nu
   return 'Typhoon' as WeatherType;
 }
 
-function WeatherTimeline({
+function WeatherCalendar({
   timeline,
   typhoonSeverityTimeline,
   daysPerCycle,
@@ -182,15 +400,12 @@ function WeatherTimeline({
   }, [anchorMonthIndex, anchorYear]);
 
   const minDate = isFinished ? firstDate : startDate;
-  const minYear = minDate.getFullYear();
-  const minMonth = minDate.getMonth();
-  const maxYear = maxDate ? maxDate.getFullYear() : null;
-  const maxMonth = maxDate ? maxDate.getMonth() : null;
-  const canUseActual = calendarYear === anchorYear;
 
   const monthName = MONTH_NAMES[calendarMonth];
   const daysInSelectedMonth = daysInMonth(calendarYear, calendarMonth);
   const startDay = anchorDate.getDate();
+  const actualCycleStart = anchorDate;
+  const actualCycleEnd = addDays(actualCycleStart, daysPerCycle - 1);
 
   const gapDays = 30;
   const plantingStart = new Date(calendarYear, anchorMonthIndex, startDay);
@@ -213,16 +428,17 @@ function WeatherTimeline({
   const cells = Array.from({ length: daysInSelectedMonth }, (_, i) => {
     const day = i + 1;
     const currentDate = new Date(calendarYear, calendarMonth, day);
-    const inCycle1 = currentDate >= plantingStart && currentDate <= plantingEnd;
-    const inCycle2 = currentDate >= plantingSecond && currentDate <= plantingSecondEnd;
-    const inCycle = inCycle1 || inCycle2;
+    const inActualCycle = currentDate >= actualCycleStart && currentDate <= actualCycleEnd;
+    const inPreviewCycle1 = currentDate >= plantingStart && currentDate <= plantingEnd;
+    const inPreviewCycle2 = currentDate >= plantingSecond && currentDate <= plantingSecondEnd;
+    const inCycle = inActualCycle || inPreviewCycle1 || inPreviewCycle2;
 
     if (!inCycle) {
       return { day, weather: null as WeatherType | null, severity: null as TyphoonSeverity | null };
     }
 
-    if (canUseActual && inCycle1) {
-      const dayIndex = Math.floor((dateToUtcMs(currentDate) - dateToUtcMs(plantingStart)) / 86400000);
+    if (inActualCycle && timeline.length > 0) {
+      const dayIndex = Math.floor((dateToUtcMs(currentDate) - dateToUtcMs(actualCycleStart)) / 86400000);
       const actual = timeline[dayIndex];
       if (actual) {
         const severity = actual === 'Typhoon' ? (typhoonSeverityTimeline[dayIndex] ?? null) : null;
@@ -237,13 +453,15 @@ function WeatherTimeline({
   const canGoPrev = (() => {
     const targetMonth = calendarMonth === 0 ? 11 : calendarMonth - 1;
     const targetYear = calendarMonth === 0 ? calendarYear - 1 : calendarYear;
-    return targetYear > minYear || (targetYear === minYear && targetMonth >= minMonth);
+    const targetEnd = new Date(targetYear, targetMonth + 1, 0);
+    return targetEnd >= minDate;
   })();
   const canGoNext = (() => {
-    if (maxYear == null || maxMonth == null) return true;
+    if (maxDate == null) return true;
     const targetMonth = calendarMonth === 11 ? 0 : calendarMonth + 1;
     const targetYear = calendarMonth === 11 ? calendarYear + 1 : calendarYear;
-    return targetYear < maxYear || (targetYear === maxYear && targetMonth <= maxMonth);
+    const targetStart = new Date(targetYear, targetMonth, 1);
+    return targetStart <= maxDate;
   })();
 
   const handlePrev = () => {
@@ -272,33 +490,36 @@ function WeatherTimeline({
   ];
 
   return (
-    <Card className="border-border">
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-            Daily Weather Calendar Row
-          </CardTitle>
+    <Card className={CARD_CLASS}>
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              Weather Calendar
+            </CardTitle>
+            <p className="text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
+              {monthName} {calendarYear} aligns to the current cycle start month. Two crop cycles are separated by a 30-day rest gap.
+            </p>
+          </div>
           <Button
             type="button"
             size="icon"
             variant="ghost"
             onClick={() => setExpanded((v) => !v)}
+            className="rounded-full hover:bg-primary/10"
             title={expanded ? 'Collapse calendar' : 'Expand calendar'}
             aria-label={expanded ? 'Collapse calendar' : 'Expand calendar'}
           >
             {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
-          {monthName} {calendarYear} aligns to the current cycle start month. Planting uses two crop cycles with a 30-day rest and land prep gap.
-        </p>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex gap-1 overflow-x-auto pb-2 no-scrollbar">
+        <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
           {cells.map((cell) => (
             <div
               key={cell.day}
-              className="w-8 h-8 rounded-md border border-border flex items-center justify-center relative shrink-0"
+              className="w-9 h-9 rounded-lg ring-1 ring-border/60 flex items-center justify-center relative shrink-0 transition hover:shadow-sm"
               style={{ backgroundColor: cell.weather ? `${WEATHER_BG[cell.weather]}` : 'transparent' }}
               title={
                 cell.weather
@@ -310,14 +531,13 @@ function WeatherTimeline({
               {cell.weather ? <WeatherIcon weather={cell.weather} className="w-3.5 h-3.5" /> : null}
               {cell.weather === 'Typhoon' && cell.severity && (
                 <span
-                  className="absolute top-0.5 right-0.5 text-[8px] font-semibold text-white rounded-full px-1 leading-[1.1]"
+                  className="absolute top-1 right-1 h-2.5 w-2.5 rounded-full ring-1 ring-white/70 shadow-sm"
                   style={{ backgroundColor: TYPHOON_SEVERITY_COLORS[cell.severity] }}
-                >
-                  {cell.severity === 'Severe' ? 'S' : 'M'}
-                </span>
+                  title={`Typhoon severity: ${cell.severity}`}
+                />
               )}
               {plantingMarkers[cell.day] && (
-                <span className="absolute bottom-0.5 right-0.5 text-[8px] font-semibold text-primary">
+                <span className="absolute bottom-0.5 right-0.5 text-[8px] font-semibold text-primary bg-primary/10 rounded-full px-1">
                   {plantingMarkers[cell.day]}
                 </span>
               )}
@@ -327,9 +547,9 @@ function WeatherTimeline({
 
         {expanded && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="grid grid-cols-[32px_minmax(14ch,1fr)_32px] items-center gap-2">
-                <Button size="icon" variant="outline" onClick={handlePrev} disabled={!canGoPrev}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="grid grid-cols-[36px_minmax(14ch,1fr)_36px] items-center gap-2">
+                <Button size="icon" variant="outline" onClick={handlePrev} disabled={!canGoPrev} className="rounded-full">
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
                 <div
@@ -338,7 +558,7 @@ function WeatherTimeline({
                 >
                   {monthName} {calendarYear}
                 </div>
-                <Button size="icon" variant="outline" onClick={handleNext} disabled={!canGoNext}>
+                <Button size="icon" variant="outline" onClick={handleNext} disabled={!canGoNext} className="rounded-full">
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>
@@ -376,7 +596,7 @@ function WeatherTimeline({
               {gridCells.map((cell, idx) => (
                 <div
                   key={`cell-${idx}`}
-                  className="rounded-md border border-border p-1 h-12 flex flex-col justify-between"
+                  className="rounded-lg ring-1 ring-border/60 p-1 h-12 flex flex-col justify-between"
                   style={{ backgroundColor: cell && cell.weather ? `${WEATHER_BG[cell.weather]}` : 'transparent' }}
                 >
                   {cell ? (
@@ -386,14 +606,17 @@ function WeatherTimeline({
                         {cell.weather ? <WeatherIcon weather={cell.weather} className="w-4 h-4" /> : null}
                         {cell.weather === 'Typhoon' && cell.severity && (
                           <span
-                            className="text-[9px] font-semibold text-white rounded-full px-1 leading-[1.1]"
+                            className="text-[9px] font-semibold text-white rounded-sm px-1 leading-[1.1]"
                             style={{ backgroundColor: TYPHOON_SEVERITY_COLORS[cell.severity] }}
+                            title={`Typhoon severity: ${cell.severity}`}
                           >
                             {cell.severity === 'Severe' ? 'S' : 'M'}
                           </span>
                         )}
                         {plantingMarkers[cell.day] && (
-                          <span className="text-[9px] font-semibold text-primary">{plantingMarkers[cell.day]}</span>
+                          <span className="text-[9px] font-semibold text-primary bg-primary/10 rounded-full px-1">
+                            {plantingMarkers[cell.day]}
+                          </span>
                         )}
                       </div>
                     </>
@@ -406,19 +629,296 @@ function WeatherTimeline({
           </div>
         )}
 
-        <ChartLegend
-          items={[
-            ...(Object.keys(WEATHER_COLORS) as WeatherType[]).map((k) => ({
-              label: k,
-              color: WEATHER_COLORS[k],
-              variant: 'fill' as const,
-            })),
-            { label: 'Typhoon severity: Moderate (M)', color: TYPHOON_SEVERITY_COLORS.Moderate, variant: 'fill' as const },
-            { label: 'Typhoon severity: Severe (S)', color: TYPHOON_SEVERITY_COLORS.Severe, variant: 'fill' as const },
-            { label: 'P1 Primary planting', color: 'hsl(var(--primary))', variant: 'fill' as const },
-            { label: 'P2 Second planting', color: 'hsl(var(--primary))', variant: 'fill' as const },
-          ]}
-        />
+        <div className="pt-3 border-t border-border/60 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+          {(Object.keys(WEATHER_COLORS) as WeatherType[]).map((key) => (
+            <span key={`legend-${key}`} className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: WEATHER_COLORS[key] }} />
+              {key}
+            </span>
+          ))}
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: TYPHOON_SEVERITY_COLORS.Moderate }} />
+            Moderate (M)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: TYPHOON_SEVERITY_COLORS.Severe }} />
+            Severe (S)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="rounded-full bg-primary/10 text-primary text-[10px] font-semibold px-2 py-0.5">P1</span>
+            Primary planting
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="rounded-full bg-primary/10 text-primary text-[10px] font-semibold px-2 py-0.5">P2</span>
+            Second planting
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ControlRail({
+  isActive,
+  isRunning,
+  isPaused,
+  isFinished,
+  mode,
+  params,
+  pendingParams,
+  displayParams,
+  speedMultiplier,
+  presets,
+  activePresetLabel,
+  setActivePresetLabel,
+  updateParams,
+  setSpeed,
+  start,
+  startInstant,
+  pause,
+  resume,
+  reset,
+}: {
+  isActive: boolean;
+  isRunning: boolean;
+  isPaused: boolean;
+  isFinished: boolean;
+  mode: 'day' | 'cycle';
+  params: ControlParams;
+  pendingParams: Partial<Pick<ControlParams, 'plantingMonth' | 'irrigationType' | 'ensoState' | 'cyclesTarget'>>;
+  displayParams: Pick<ControlParams, 'plantingMonth' | 'irrigationType' | 'ensoState' | 'typhoonProbability' | 'cyclesTarget'>;
+  speedMultiplier: number;
+  presets: { label: string; icon: ReactNode; params: Partial<ControlParams> }[];
+  activePresetLabel: string | null;
+  setActivePresetLabel: (value: string | null) => void;
+  updateParams: (partial: Partial<ControlParams>) => void;
+  setSpeed: (multiplier: number) => void;
+  start: () => void;
+  startInstant: () => void;
+  pause: () => void;
+  resume: () => void;
+  reset: () => void;
+}) {
+  const runLabel = isRunning
+    ? `Running · ${mode === 'cycle' ? 'Instant sweep' : 'Day-by-day'}`
+    : isPaused
+    ? 'Paused'
+    : isFinished
+    ? 'Finished'
+    : 'Idle';
+  const isQueueing = isRunning || isPaused;
+
+  return (
+    <Card className={CARD_CLASS}>
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-lg" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              Control Rail
+            </CardTitle>
+            <div className="text-xs text-muted-foreground mt-1">Configure the scenario and run the model.</div>
+          </div>
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className={`h-2 w-2 rounded-full ${isRunning ? 'bg-primary animate-pulse' : 'bg-muted'}`} />
+            {runLabel}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <ControlGroup
+          title="Planting Setup"
+          subtitle="Set crop context and climate regime."
+          icon={<Leaf className="w-4 h-4" />}
+          badge={isQueueing && <StatusChip tone="queued" label="Applies next cycle" />}
+        >
+          <div className="space-y-1.5">
+            <Label className="flex items-center gap-2 text-xs">
+              Planting Month
+              {isQueueing && pendingParams.plantingMonth !== undefined && <StatusChip tone="queued" label="Queued" />}
+            </Label>
+            <Select value={String(displayParams.plantingMonth)} onValueChange={(v) => updateParams({ plantingMonth: Number(v) })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {MONTH_NAMES.map((m, i) => (
+                  <SelectItem key={i} value={String(i + 1)}>{m}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="flex items-center gap-2 text-xs">
+              Irrigation Type
+              {isQueueing && pendingParams.irrigationType !== undefined && <StatusChip tone="queued" label="Queued" />}
+            </Label>
+            <Select value={displayParams.irrigationType} onValueChange={(v) => updateParams({ irrigationType: v as IrrigationType })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Irrigated">Irrigated (+0.3 t/ha)</SelectItem>
+                <SelectItem value="Rainfed">Rainfed</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="flex items-center gap-2 text-xs">
+              ENSO State
+              {isQueueing && pendingParams.ensoState !== undefined && <StatusChip tone="queued" label="Queued" />}
+            </Label>
+            <Select value={displayParams.ensoState} onValueChange={(v) => updateParams({ ensoState: v as ENSOState })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="El Niño">El Niño (-0.4 t/ha)</SelectItem>
+                <SelectItem value="Neutral">Neutral</SelectItem>
+                <SelectItem value="La Niña">La Niña (+0.3 t/ha)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Scenario Presets</Label>
+              {isQueueing && <StatusChip tone="queued" label="Applies next cycle" />}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {presets.map((preset) => (
+                <button
+                  key={preset.label}
+                  onClick={() => {
+                    setActivePresetLabel(preset.label);
+                    updateParams(preset.params);
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold ring-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                    activePresetLabel === preset.label
+                      ? 'bg-primary text-primary-foreground ring-primary'
+                      : 'bg-card text-muted-foreground ring-border/70 hover:text-foreground hover:ring-primary/50'
+                  }`}
+                >
+                  <span className="text-primary/70">{preset.icon}</span>
+                  {preset.label}
+                </button>
+              ))}
+              <button
+                onClick={() => setActivePresetLabel(null)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold ring-1 ring-border/70 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                title="Clear preset selection"
+              >
+                <X className="w-3 h-3" />
+                Clear
+              </button>
+            </div>
+            <div className="text-[10px] text-muted-foreground">
+              Presets apply to the next cycle when a run is active.
+            </div>
+          </div>
+        </ControlGroup>
+
+        <ControlGroup
+          title="Storm Risk"
+          subtitle="Adjust typhoon probability live."
+          icon={<Wind className="w-4 h-4" />}
+          badge={<StatusChip tone="live" label="Live" />}
+        >
+          <div className="space-y-1.5">
+            <Label className="flex items-center gap-2 text-xs">
+              Typhoon Probability: {params.typhoonProbability}%
+            </Label>
+            <Slider value={[params.typhoonProbability]} onValueChange={([v]) => updateParams({ typhoonProbability: v })} min={0} max={40} step={1} />
+          </div>
+        </ControlGroup>
+
+        <ControlGroup
+          title="Run Setup"
+          subtitle="Set cycles and simulation speed."
+          icon={<Settings2 className="w-4 h-4" />}
+          badge={isQueueing && pendingParams.cyclesTarget !== undefined && <StatusChip tone="queued" label="Queued" />}
+        >
+          <div className="space-y-1.5">
+            <Label className="flex items-center gap-2 text-xs">
+              Crop Cycles
+              {isQueueing && pendingParams.cyclesTarget !== undefined && <StatusChip tone="queued" label="Queued" />}
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={1}
+                max={500}
+                step={1}
+                value={displayParams.cyclesTarget}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === '') return;
+                  const value = Number(raw);
+                  if (Number.isNaN(value)) return;
+                  const clamped = Math.min(500, Math.max(1, Math.round(value)));
+                  updateParams({ cyclesTarget: clamped });
+                }}
+                className="w-24"
+              />
+              <span className="text-[11px] text-muted-foreground">1-500 cycles</span>
+            </div>
+            <Slider
+              value={[displayParams.cyclesTarget]}
+              onValueChange={([v]) => updateParams({ cyclesTarget: v })}
+              min={1}
+              max={500}
+              step={1}
+            />
+          </div>
+
+          <div className="space-y-2 rounded-2xl ring-1 ring-border/60 bg-surface/90 p-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Speed</Label>
+              <div className="text-sm font-semibold" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{speedMultiplier}x</div>
+            </div>
+            <Slider value={[speedMultiplier]} onValueChange={([v]) => setSpeed(v)} min={0.5} max={20} step={0.5} />
+            <div className="grid grid-cols-3 gap-2">
+              {[0.5, 1, 2, 5, 10, 20].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSpeed(s)}
+                  className={`text-xs px-2 py-1 rounded-lg ring-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                    speedMultiplier === s
+                      ? 'bg-primary text-primary-foreground ring-primary'
+                      : 'ring-border/70 text-muted-foreground hover:ring-primary/50'
+                  }`}
+                >
+                  {SPEED_LABELS[s]}
+                </button>
+              ))}
+            </div>
+          </div>
+        </ControlGroup>
+
+        <ControlGroup
+          title="Actions"
+          subtitle="Start, pause, or reset the run."
+          icon={<Timer className="w-4 h-4" />}
+        >
+          <div className="flex gap-2 flex-wrap">
+            {isFinished || !isActive ? (
+              <>
+                <Button onClick={start} className="flex-1 gap-2">
+                  <Play className="w-4 h-4" /> Start
+                </Button>
+                <Button onClick={startInstant} variant="secondary" className="flex-1 gap-2">
+                  <Zap className="w-4 h-4" /> Instant
+                </Button>
+              </>
+            ) : isRunning ? (
+              <Button onClick={pause} variant="outline" className="flex-1 gap-2">
+                <Pause className="w-4 h-4" /> Pause
+              </Button>
+            ) : (
+              <Button onClick={resume} className="flex-1 gap-2">
+                <Play className="w-4 h-4" /> Resume
+              </Button>
+            )}
+            <Button onClick={reset} variant="outline" className="gap-2" size="icon" aria-label="Reset simulation">
+              <RotateCcw className="w-4 h-4" />
+            </Button>
+          </div>
+        </ControlGroup>
       </CardContent>
     </Card>
   );
@@ -485,22 +985,40 @@ function FarmerInterpretation({
     'hsl(var(--destructive))';
 
   return (
-    <Card className="border-border" style={{ borderLeftWidth: 4, borderLeftColor: borderColor }}>
+    <Card className={CARD_CLASS} style={{ borderLeftWidth: 4, borderLeftColor: borderColor }}>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-          Farmer Interpretation
-        </CardTitle>
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            Farmer Advisory
+          </CardTitle>
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+              riskLevel === 'low'
+                ? 'bg-primary/10 text-primary'
+                : riskLevel === 'moderate'
+                ? 'bg-warning/15 text-warning'
+                : 'bg-destructive/15 text-destructive'
+            }`}
+          >
+            {riskLevel === 'low'
+              ? <ShieldCheck className="w-3 h-3" />
+              : riskLevel === 'moderate'
+              ? <AlertTriangle className="w-3 h-3" />
+              : <Tornado className="w-3 h-3" />}
+            {riskLevel} risk
+          </span>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4 text-sm" style={{ fontFamily: "'Poppins', sans-serif" }}>
-        <div>
+        <div className="rounded-xl bg-surface/80 ring-1 ring-border/60 p-3">
           <div className="font-semibold text-foreground mb-1">Current Situation</div>
           <p className="text-muted-foreground leading-relaxed">{situation}</p>
         </div>
-        <div>
+        <div className="rounded-xl bg-surface/80 ring-1 ring-border/60 p-3">
           <div className="font-semibold text-foreground mb-1">What This Means</div>
           <p className="text-muted-foreground leading-relaxed">{meaning}</p>
         </div>
-        <div>
+        <div className="rounded-xl bg-surface/80 ring-1 ring-border/60 p-3">
           <div className="font-semibold text-foreground mb-1">Suggested Action</div>
           <p className="text-muted-foreground leading-relaxed">{action}</p>
         </div>
@@ -516,7 +1034,9 @@ export default function SimulationTab() {
     currentCycleIndex, currentDay, dayProgress,
     currentWeather, currentYield, runningMean, runningSd, lowYieldProb,
     histogramBins, dailyWeatherCounts, dailyTyphoonSeverityCounts, yieldSeries, yieldBandSeries, yieldHistoryOverTime,
-    currentCycleWeatherTimeline, currentCycleTyphoonSeverityTimeline, cycleRecords, summary, cycleStartDate, firstCycleStartDate, lastCompletedCycleStartDate,
+    currentCycleWeatherTimeline, currentCycleTyphoonSeverityTimeline,
+    lastCompletedCycleWeatherTimeline = [], lastCompletedCycleTyphoonSeverityTimeline = [],
+    cycleRecords, summary, cycleStartDate, firstCycleStartDate, lastCompletedCycleStartDate,
   } = snap;
 
   const isRunning = status === 'running';
@@ -528,19 +1048,18 @@ export default function SimulationTab() {
   const [activePresetLabel, setActivePresetLabel] = useState<string | null>(null);
 
   const overviewCard = (
-    <Card className="border-border">
+    <Card className={CARD_CLASS}>
       <CardHeader className="pb-2">
         <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-          Simulation Tab Overview
+          Simulation Overview
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3 text-sm" style={{ fontFamily: "'Poppins', sans-serif" }}>
+      <CardContent className="space-y-4 text-sm" style={{ fontFamily: "'Poppins', sans-serif" }}>
         <p className="text-muted-foreground leading-relaxed">
-          This tab connects the simulation controls to the analysis panels. You configure inputs, run the model,
-          and the outputs update the charts, risk summaries, and reports below.
+          Configure inputs on the left, run the model, and watch the analytics update in real time below.
         </p>
-        <div>
-          <div className="font-semibold text-foreground">How the simulation works</div>
+        <div className="rounded-2xl bg-surface/80 ring-1 ring-border/60 p-4">
+          <div className="font-semibold text-foreground mb-2">How the simulation works</div>
           <ol className="text-muted-foreground leading-relaxed list-decimal pl-5 space-y-1">
             <li>Create a new crop cycle with a start date and initialize the 120-day timeline.</li>
             <li>Assign crop parameters: planting month, irrigation type, ENSO state, and typhoon probability.</li>
@@ -553,25 +1072,19 @@ export default function SimulationTab() {
             <li>Advance the calendar by the 30-day rest gap, then update totals, distributions, confidence bands, and risk metrics.</li>
           </ol>
         </div>
-        <div className="space-y-3">
+        <div className="grid gap-3">
           {SIMULATION_OVERVIEW.map((item) => (
-            <div key={item.title} className="flex gap-2">
-              <span className="mt-1 h-2 w-2 rounded-full bg-primary/70 shrink-0" />
-              <div>
-                <div className="font-semibold text-foreground">{item.title}</div>
-                <div className="text-muted-foreground leading-relaxed">{item.description}</div>
-              </div>
+            <div key={item.title} className="rounded-xl bg-surface/70 ring-1 ring-border/50 p-3">
+              <div className="font-semibold text-foreground">{item.title}</div>
+              <div className="text-muted-foreground leading-relaxed">{item.description}</div>
             </div>
           ))}
           {isFarmer && (
-            <div className="flex gap-2">
-              <span className="mt-1 h-2 w-2 rounded-full bg-primary/70 shrink-0" />
-              <div>
-                <div className="font-semibold text-foreground">Farmer interpretation</div>
-                <div className="text-muted-foreground leading-relaxed">
-                  In Farmer view, the interpretation card translates model metrics into plain language with
-                  risk context and suggested actions.
-                </div>
+            <div className="rounded-xl bg-surface/70 ring-1 ring-border/50 p-3">
+              <div className="font-semibold text-foreground">Farmer interpretation</div>
+              <div className="text-muted-foreground leading-relaxed">
+                In Farmer view, the interpretation card translates model metrics into plain language with
+                risk context and suggested actions.
               </div>
             </div>
           )}
@@ -585,6 +1098,29 @@ export default function SimulationTab() {
   const cyclePhase = displayCycle <= 0 ? 'P1' : (displayCycle % 2 === 1 ? 'P1' : 'P2');
   const cycleLabel = `${displayCycle} / ${params.cyclesTarget} (${cyclePhase})`;
   const displayDay = isFinished ? params.daysPerCycle : currentDay;
+  const lastTimelineRef = useRef<WeatherType[]>([]);
+  const lastSeverityRef = useRef<(TyphoonSeverity | null)[]>([]);
+
+  useEffect(() => {
+    if (currentCycleWeatherTimeline.length > 0) {
+      lastTimelineRef.current = currentCycleWeatherTimeline;
+      lastSeverityRef.current = currentCycleTyphoonSeverityTimeline ?? [];
+    }
+  }, [currentCycleWeatherTimeline, currentCycleTyphoonSeverityTimeline]);
+
+  const completedWeatherTimeline =
+    lastCompletedCycleWeatherTimeline.length > 0
+      ? lastCompletedCycleWeatherTimeline
+      : lastTimelineRef.current;
+  const completedTyphoonTimeline =
+    lastCompletedCycleTyphoonSeverityTimeline.length > 0
+      ? lastCompletedCycleTyphoonSeverityTimeline
+      : lastSeverityRef.current;
+
+  const calendarWeatherTimeline = isFinished ? completedWeatherTimeline : currentCycleWeatherTimeline;
+  const calendarTyphoonSeverityTimeline = isFinished
+    ? completedTyphoonTimeline
+    : (currentCycleTyphoonSeverityTimeline ?? []);
   const cycleStart = useMemo(() => parseDateOnly(cycleStartDate), [cycleStartDate]);
   const cycleStartMonth = cycleStart.getMonth() + 1;
   const currentSeason = useMemo(() => getSeason(cycleStartMonth), [cycleStartMonth]);
@@ -625,12 +1161,6 @@ export default function SimulationTab() {
   const latestMean = yieldHistoryOverTime.length > 0 ? yieldHistoryOverTime[yieldHistoryOverTime.length - 1] : null;
   const summaryNumbers = summary ?? null;
   const noiseSdValue = summaryNumbers?.noiseSd ?? 0.2;
-  const lowYieldCount = useMemo(
-    () => cycleRecords.reduce((acc, r) => acc + (r.yieldTons < 2.0 ? 1 : 0), 0),
-    [cycleRecords]
-  );
-  const lowYieldPct = cycleRecords.length > 0 ? (lowYieldCount / cycleRecords.length) * 100 : 0;
-  const lowYieldFlagText = cycleRecords.length > 0 ? `${lowYieldCount} (${lowYieldPct.toFixed(1)}%)` : '---';
   const weatherPercents = totalWeather > 0
     ? (Object.keys(dailyWeatherCounts) as WeatherType[]).reduce((acc, key) => {
       acc[key] = (dailyWeatherCounts[key] / totalWeather) * 100;
@@ -649,9 +1179,9 @@ export default function SimulationTab() {
 
   const confidence = useMemo(() => {
     const n = cycleRecords.length;
-    if (n >= 50) return { label: 'High confidence', tone: 'text-primary' };
-    if (n >= 20) return { label: 'Medium confidence', tone: 'text-warning' };
-    return { label: 'Low confidence', tone: 'text-muted-foreground' };
+    if (n >= 50) return { label: 'High', tone: 'bg-primary/10 text-primary', icon: <BadgeCheck className="w-3 h-3" />, sizeClass: 'text-[11px]' };
+    if (n >= 20) return { label: 'Medium', tone: 'bg-warning/15 text-warning', icon: <AlertTriangle className="w-3 h-3" />, sizeClass: 'text-[10px]' };
+    return { label: 'Low', tone: 'bg-muted text-muted-foreground', icon: <Activity className="w-3 h-3" />, sizeClass: 'text-[11px]' };
   }, [cycleRecords.length]);
 
   const weatherStory = useMemo(() => {
@@ -685,21 +1215,190 @@ export default function SimulationTab() {
     return parts.join('; ') + '.';
   }, [dailyWeatherCounts, dailyTyphoonSeverityCounts, totalWeather]);
 
+  const metricItems = useMemo(() => {
+    const cyclePill = (
+      <span className="inline-flex items-center gap-2">
+        <span>{displayCycle} / {params.cyclesTarget}</span>
+        <span className="rounded-full bg-primary/10 text-primary text-[10px] font-semibold px-2 py-0.5">
+          {cyclePhase}
+        </span>
+      </span>
+    );
+    const confidencePill = (
+      <span
+        className={`inline-flex items-center justify-center gap-2 rounded-full h-7 min-w-[120px] px-3 font-semibold whitespace-nowrap ${confidence.sizeClass ?? 'text-[11px]'} ${confidence.tone}`}
+      >
+        {confidence.icon}
+        {confidence.label}
+      </span>
+    );
+
+    const base: MetricItem[] = [
+      { label: 'Cycle', value: cyclePill, icon: <Layers className="w-4 h-4" /> },
+      { label: 'Day', value: `${displayDay} / ${params.daysPerCycle}`, icon: <CalendarDays className="w-4 h-4" /> },
+      { label: 'Season', value: currentSeason, icon: <Leaf className="w-4 h-4" /> },
+    ];
+
+    const farmerMetrics: MetricItem[] = [
+      { label: 'Current Yield', value: currentYield != null ? formatYieldValue(currentYield) : '---', icon: <Gauge className="w-4 h-4" /> },
+      { label: 'Running Mean', value: runningMean > 0 ? formatYieldValue(runningMean) : '---', icon: <Activity className="w-4 h-4" /> },
+      { label: 'Natural Variability', value: `${formatSacks(noiseSdValue)} sacks SD`, icon: <Sparkles className="w-4 h-4" /> },
+      { label: 'Low Yield Risk', value: `${(lowYieldProb * 100).toFixed(1)}%`, icon: <ShieldCheck className="w-4 h-4" /> },
+    ];
+
+    const analyticsMetrics: MetricItem[] = [
+      { label: 'Current Yield', value: currentYield != null ? `${currentYield.toFixed(2)} t/ha` : '---', icon: <Gauge className="w-4 h-4" /> },
+      { label: 'Running Mean', value: runningMean > 0 ? `${runningMean.toFixed(2)} t/ha` : '---', icon: <Activity className="w-4 h-4" /> },
+      { label: 'Random Noise SD', value: `${noiseSdValue.toFixed(2)} t/ha`, icon: <Sparkles className="w-4 h-4" /> },
+      { label: 'Low Yield Risk', value: `${(lowYieldProb * 100).toFixed(1)}%`, icon: <ShieldCheck className="w-4 h-4" /> },
+    ];
+
+    return [
+      ...base,
+      ...(isFarmer ? farmerMetrics : analyticsMetrics),
+      { label: 'Confidence', value: confidencePill, icon: <ShieldCheck className="w-4 h-4" /> },
+    ];
+  }, [
+    confidence, currentSeason, currentYield, cyclePhase, displayCycle, displayDay, formatYieldValue,
+    isFarmer, lowYieldProb, noiseSdValue, params.cyclesTarget, params.daysPerCycle, runningMean,
+  ]);
+
+  const yieldTrendInsight = useMemo(() => {
+    if (yieldHistoryOverTime.length < 3) {
+      return { tone: 'default' as InsightTone, icon: <Activity className="w-3 h-3" />, text: 'Run more cycles to reveal a yield trend.' };
+    }
+    const window = yieldHistoryOverTime.slice(-5);
+    const delta = window[window.length - 1] - window[0];
+    const abs = Math.abs(delta);
+    const deltaText = isFarmer ? `${Math.round(abs * 20)} sacks` : `${abs.toFixed(2)} t/ha`;
+    if (abs < 0.03) {
+      return { tone: 'steady' as InsightTone, icon: <Activity className="w-3 h-3" />, text: `Mean is steady over the last ${window.length} cycles.` };
+    }
+    return {
+      tone: delta > 0 ? 'up' as InsightTone : 'down' as InsightTone,
+      icon: delta > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />,
+      text: `Mean is ${delta > 0 ? 'up' : 'down'} by ${deltaText} over the last ${window.length} cycles.`,
+    };
+  }, [isFarmer, yieldHistoryOverTime]);
+
+  const weatherInsight = useMemo(() => {
+    if (!weatherPercents) {
+      return { tone: 'default' as InsightTone, icon: <Cloud className="w-3 h-3" />, text: 'Weather mix appears after the first cycle.' };
+    }
+    const entries = Object.entries(weatherPercents).sort((a, b) => b[1] - a[1]);
+    const [dominant, pct] = entries[0] as [WeatherType, number];
+    return {
+      tone: 'default' as InsightTone,
+      icon: <WeatherIcon weather={dominant} className="w-3 h-3" />,
+      text: `Dominant weather is ${dominant} at ${pct.toFixed(1)}%.`,
+    };
+  }, [weatherPercents]);
+
+  const distributionInsight = useMemo(() => {
+    if (histogramBins.length === 0) {
+      return { tone: 'default' as InsightTone, icon: <Layers className="w-3 h-3" />, text: 'Distribution appears after the first few cycles.' };
+    }
+    const top = histogramBins.reduce((acc, b) => (b.count > acc.count ? b : acc), histogramBins[0]);
+    if (!top || top.count === 0) {
+      return { tone: 'default' as InsightTone, icon: <Layers className="w-3 h-3" />, text: 'Distribution appears after the first few cycles.' };
+    }
+    const start = Number(top.label);
+    const end = start + 0.5;
+    const label = isFarmer
+      ? `${formatSacks(start)}-${formatSacks(end)} sacks`
+      : `${start.toFixed(1)}-${end.toFixed(1)} t/ha`;
+    return { tone: 'default' as InsightTone, icon: <Layers className="w-3 h-3" />, text: `Most common bin: ${label}.` };
+  }, [histogramBins, isFarmer]);
+
+  const meanInsight = useMemo(() => {
+    if (yieldHistoryOverTime.length < 6) {
+      return { tone: 'default' as InsightTone, icon: <Activity className="w-3 h-3" />, text: 'Running mean stabilizes as more cycles complete.' };
+    }
+    const window = yieldHistoryOverTime.slice(-6);
+    const spread = Math.max(...window) - Math.min(...window);
+    const spreadText = isFarmer ? `${Math.round(spread * 20)} sacks` : `${spread.toFixed(2)} t/ha`;
+    if (spread < 0.04) {
+      return { tone: 'steady' as InsightTone, icon: <BadgeCheck className="w-3 h-3" />, text: `Stabilizing over the last ${window.length} cycles (${spreadText} spread).` };
+    }
+    return { tone: 'default' as InsightTone, icon: <Activity className="w-3 h-3" />, text: `Still shifting over the last ${window.length} cycles (${spreadText} spread).` };
+  }, [isFarmer, yieldHistoryOverTime]);
+
   const presets = [
-    { label: 'Dry Season Rainfed', params: { plantingMonth: 2, irrigationType: 'Rainfed' as IrrigationType, ensoState: 'Neutral' as ENSOState, typhoonProbability: 5 } },
-    { label: 'Wet Season Irrigated', params: { plantingMonth: 7, irrigationType: 'Irrigated' as IrrigationType, ensoState: 'Neutral' as ENSOState, typhoonProbability: 15 } },
-    { label: 'High Typhoon', params: { typhoonProbability: 35 } },
-    { label: 'La Niña Boost', params: { ensoState: 'La Niña' as ENSOState, irrigationType: 'Irrigated' as IrrigationType } },
-    { label: 'El Niño Stress', params: { ensoState: 'El Niño' as ENSOState, irrigationType: 'Rainfed' as IrrigationType } },
+    { label: 'Dry Season Rainfed', icon: <Sun className="w-3 h-3" />, params: { plantingMonth: 2, irrigationType: 'Rainfed' as IrrigationType, ensoState: 'Neutral' as ENSOState, typhoonProbability: 5 } },
+    { label: 'Wet Season Irrigated', icon: <CloudRain className="w-3 h-3" />, params: { plantingMonth: 7, irrigationType: 'Irrigated' as IrrigationType, ensoState: 'Neutral' as ENSOState, typhoonProbability: 15 } },
+    { label: 'High Typhoon', icon: <Tornado className="w-3 h-3" />, params: { typhoonProbability: 35 } },
+    { label: 'La Niña Boost', icon: <Sparkles className="w-3 h-3" />, params: { ensoState: 'La Niña' as ENSOState, irrigationType: 'Irrigated' as IrrigationType } },
+    { label: 'El Niño Stress', icon: <AlertTriangle className="w-3 h-3" />, params: { ensoState: 'El Niño' as ENSOState, irrigationType: 'Rainfed' as IrrigationType } },
   ];
 
   const handleExport = useCallback(() => {
     if (cycleRecords.length === 0) return;
 
-    const rows: string[] = [];
-    rows.push('Cycle,Final Yield (t/ha),Final Yield (sacks),Season,Dominant Weather,Dominant Typhoon Severity,Typhoon Days,Severe Typhoon Days,ENSO State,Irrigation Type,Cycle Start Month,Typhoon Probability (%)');
-    cycleRecords.forEach((r) => {
-      rows.push([
+    const csvEscape = (value: string) => {
+      if (/[",\n]/.test(value)) {
+        return `"${value.replace(/"/g, '""')}"`;
+      }
+      return value;
+    };
+
+    const buildTable = (title: string, headers: string[], dataRows: (string | number)[][]) => {
+      const width = Math.max(1, headers.length, ...dataRows.map((row) => row.length));
+      const empty = (count: number) => Array.from({ length: count }, () => '');
+      const block: string[][] = [];
+      block.push([title, ...empty(width - 1)]);
+      if (headers.length > 0) {
+        block.push([...headers, ...empty(width - headers.length)]);
+      }
+      dataRows.forEach((row) => {
+        const normalized = row.map((cell) => (cell == null ? '' : String(cell)));
+        block.push([...normalized, ...empty(width - normalized.length)]);
+      });
+      return block;
+    };
+
+    const mergeTables = (tables: string[][][], gap = 1) => {
+      const widths = tables.map((table) => table[0]?.length ?? 0);
+      const maxRows = Math.max(...tables.map((table) => table.length));
+      const gapCells = Array.from({ length: gap }, () => '');
+      const merged: string[][] = [];
+      for (let rowIndex = 0; rowIndex < maxRows; rowIndex += 1) {
+        const row: string[] = [];
+        tables.forEach((table, tableIndex) => {
+          const width = widths[tableIndex];
+          const tableRow = table[rowIndex] ?? Array.from({ length: width }, () => '');
+          row.push(...tableRow);
+          if (tableIndex < tables.length - 1) {
+            row.push(...gapCells);
+          }
+        });
+        merged.push(row);
+      }
+      return merged;
+    };
+
+    const s = summary;
+    const n = cycleRecords.length;
+    const ciLow = s?.ciLow ?? (runningMean - 1.96 * runningSd / Math.sqrt(Math.max(1, n)));
+    const ciHigh = s?.ciHigh ?? (runningMean + 1.96 * runningSd / Math.sqrt(Math.max(1, n)));
+
+    const totalDays = Object.values(dailyWeatherCounts).reduce((a, b) => a + b, 0) || 1;
+    const cycleTable = buildTable(
+      'Cycle Records',
+      [
+        'Cycle',
+        'Final Yield (t/ha)',
+        'Final Yield (sacks)',
+        'Season',
+        'Dominant Weather',
+        'Dominant Typhoon Severity',
+        'Typhoon Days',
+        'Severe Typhoon Days',
+        'ENSO State',
+        'Irrigation Type',
+        'Cycle Start Month',
+        'Typhoon Probability (%)',
+      ],
+      cycleRecords.map((r) => ([
         r.cycleIndex,
         r.yieldTons.toFixed(4),
         r.yieldSacks.toFixed(2),
@@ -712,82 +1411,91 @@ export default function SimulationTab() {
         r.irrigationType,
         r.plantingMonth,
         r.typhoonProbability.toFixed(1),
-      ].join(','));
-    });
+      ]))
+    );
 
-    const s = summary;
-    const n = cycleRecords.length;
-    const ciLow = s?.ciLow ?? (runningMean - 1.96 * runningSd / Math.sqrt(Math.max(1, n)));
-    const ciHigh = s?.ciHigh ?? (runningMean + 1.96 * runningSd / Math.sqrt(Math.max(1, n)));
-
-    rows.push('');
-    rows.push('SUMMARY');
-    rows.push('Metric,Value');
-    rows.push(`Completed Cycles,${n}`);
-    rows.push(`Mean Yield (t/ha),${(s?.mean ?? runningMean).toFixed(4)}`);
-    rows.push(`Std Deviation (t/ha),${(s?.std ?? runningSd).toFixed(4)}`);
-    rows.push(`Min Yield (t/ha),${(s?.min ?? 0).toFixed(4)}`);
-    rows.push(`Max Yield (t/ha),${(s?.max ?? 0).toFixed(4)}`);
-    rows.push(`5th Percentile (t/ha),${(s?.percentile5 ?? 0).toFixed(4)}`);
-    rows.push(`95th Percentile (t/ha),${(s?.percentile95 ?? 0).toFixed(4)}`);
-    rows.push(`95% CI Lower (t/ha),${ciLow.toFixed(4)}`);
-    rows.push(`95% CI Upper (t/ha),${ciHigh.toFixed(4)}`);
+    const summaryRows: (string | number)[][] = [
+      ['Completed Cycles', n],
+      ['Mean Yield (t/ha)', (s?.mean ?? runningMean).toFixed(4)],
+      ['Std Deviation (t/ha)', (s?.std ?? runningSd).toFixed(4)],
+      ['Min Yield (t/ha)', (s?.min ?? 0).toFixed(4)],
+      ['Max Yield (t/ha)', (s?.max ?? 0).toFixed(4)],
+      ['5th Percentile (t/ha)', (s?.percentile5 ?? 0).toFixed(4)],
+      ['95th Percentile (t/ha)', (s?.percentile95 ?? 0).toFixed(4)],
+      ['95% CI Lower (t/ha)', ciLow.toFixed(4)],
+      ['95% CI Upper (t/ha)', ciHigh.toFixed(4)],
+    ];
     if (s) {
-      rows.push(`CI Width (t/ha),${s.ciWidth.toFixed(4)}`);
-      rows.push(`Weather Variability SD (t/ha),${s.deterministicSd.toFixed(4)}`);
-      rows.push(`Random Noise SD (t/ha),${s.noiseSd.toFixed(4)}`);
+      summaryRows.push(['CI Width (t/ha)', s.ciWidth.toFixed(4)]);
+      summaryRows.push(['Weather Variability SD (t/ha)', s.deterministicSd.toFixed(4)]);
+      summaryRows.push(['Random Noise SD (t/ha)', s.noiseSd.toFixed(4)]);
     }
-    rows.push(`Low Yield Probability (%),${(lowYieldProb * 100).toFixed(2)}`);
+    summaryRows.push(['Low Yield Probability (%)', (lowYieldProb * 100).toFixed(2)]);
 
-    rows.push('');
-    rows.push('CHART_DATA');
+    const summaryTable = buildTable('Summary', ['Metric', 'Value'], summaryRows);
 
-    rows.push('Daily Weather Counts');
-    rows.push('Weather,Days,Percent');
-    const totalDays = Object.values(dailyWeatherCounts).reduce((a, b) => a + b, 0) || 1;
-    (Object.keys(dailyWeatherCounts) as WeatherType[]).forEach((key) => {
-      const count = dailyWeatherCounts[key];
-      const pct = (count / totalDays) * 100;
-      rows.push(`${key},${count},${pct.toFixed(2)}`);
-    });
+    const weatherTable = buildTable(
+      'Daily Weather Counts',
+      ['Weather', 'Days', 'Percent'],
+      (Object.keys(dailyWeatherCounts) as WeatherType[]).map((key) => {
+        const count = dailyWeatherCounts[key];
+        const pct = (count / totalDays) * 100;
+        return [key, count, pct.toFixed(2)];
+      })
+    );
 
-    rows.push('');
-    rows.push('Typhoon Severity Counts');
-    rows.push('Severity,Days');
-    rows.push(`Moderate,${dailyTyphoonSeverityCounts.Moderate}`);
-    rows.push(`Severe,${dailyTyphoonSeverityCounts.Severe}`);
+    const typhoonTable = buildTable(
+      'Typhoon Severity Counts',
+      ['Severity', 'Days'],
+      [
+        ['Moderate', dailyTyphoonSeverityCounts.Moderate],
+        ['Severe', dailyTyphoonSeverityCounts.Severe],
+      ]
+    );
 
-    rows.push('');
-    rows.push('Yield Over Cycles');
-    rows.push('Cycle,Yield (t/ha)');
-    yieldSeries.forEach((p) => {
-      rows.push(`${p.cycle},${p.yield.toFixed(4)}`);
-    });
+    const yieldSeriesTable = buildTable(
+      'Yield Over Cycles',
+      ['Cycle', 'Yield (t/ha)'],
+      yieldSeries.map((p) => ([p.cycle, p.yield.toFixed(4)]))
+    );
 
-    if (yieldBandSeries.length > 0) {
-      rows.push('');
-      rows.push('Expected Range (P5-P95)');
-      rows.push('Cycle,Mean,P5,P95');
-      yieldBandSeries.forEach((p) => {
-        rows.push(`${p.cycle},${p.mean.toFixed(4)},${p.p5.toFixed(4)},${p.p95.toFixed(4)}`);
-      });
-    }
+    const expectedRangeTable = buildTable(
+      'Expected Range (P5-P95)',
+      ['Cycle', 'Mean', 'P5', 'P95'],
+      yieldBandSeries.map((p) => ([p.cycle, p.mean.toFixed(4), p.p5.toFixed(4), p.p95.toFixed(4)]))
+    );
 
-    rows.push('');
-    rows.push('Running Mean');
-    rows.push('Cycle,Mean (t/ha)');
-    yieldHistoryOverTime.forEach((v, i) => {
-      rows.push(`${i + 1},${v.toFixed(4)}`);
-    });
+    const runningMeanTable = buildTable(
+      'Running Mean',
+      ['Cycle', 'Mean (t/ha)'],
+      yieldHistoryOverTime.map((value, index) => ([index + 1, value.toFixed(4)]))
+    );
 
-    rows.push('');
-    rows.push('Yield Distribution');
-    rows.push('Bin Start (t/ha),Count');
-    histogramBins.forEach((b) => {
-      rows.push(`${b.label},${b.count}`);
-    });
+    const histogramTable = buildTable(
+      'Yield Distribution',
+      ['Bin Start (t/ha)', 'Count'],
+      histogramBins.map((bin) => ([bin.label, bin.count]))
+    );
 
-    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const mergedRows = mergeTables(
+      [
+        cycleTable,
+        summaryTable,
+        weatherTable,
+        typhoonTable,
+        yieldSeriesTable,
+        expectedRangeTable,
+        runningMeanTable,
+        histogramTable,
+      ],
+      1
+    );
+
+    const csvContent = mergedRows
+      .map((row) => row.map((cell) => csvEscape(cell)).join(','))
+      .join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const ts = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
@@ -804,197 +1512,35 @@ export default function SimulationTab() {
     window.print();
   }, []);
 
-  const controlCard = (
-    <Card className="border-border">
-      <CardHeader>
-        <CardTitle className="text-lg" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Parameter Control</CardTitle>
-        {isActive && (
-          <div className="text-xs text-muted-foreground flex items-center gap-1.5" style={{ fontFamily: "'Poppins', sans-serif" }}>
-            <span className="w-2 h-2 rounded-full bg-primary animate-pulse inline-block" />
-            {isRunning ? `Running - ${mode === 'cycle' ? 'Instant sweep' : 'Day-by-day'}` : isPaused ? 'Paused' : 'Finished'}
-          </div>
-        )}
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-1.5">
-          <Label style={{ fontFamily: "'Poppins', sans-serif" }}>
-            Planting Month
-            {isActive && pendingParams.plantingMonth !== undefined && (
-              <span className="ml-2 text-[10px] text-warning">(queued)</span>
-            )}
-          </Label>
-          <Select value={String(displayParams.plantingMonth)} onValueChange={(v) => updateParams({ plantingMonth: Number(v) })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {MONTH_NAMES.map((m, i) => (
-                <SelectItem key={i} value={String(i + 1)} style={{ fontFamily: "'Poppins', sans-serif" }}>{m}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label style={{ fontFamily: "'Poppins', sans-serif" }}>
-            Irrigation Type
-            {isActive && pendingParams.irrigationType !== undefined && (
-              <span className="ml-2 text-[10px] text-warning">(queued)</span>
-            )}
-          </Label>
-          <Select value={displayParams.irrigationType} onValueChange={(v) => updateParams({ irrigationType: v as IrrigationType })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Irrigated" style={{ fontFamily: "'Poppins', sans-serif" }}>Irrigated (+0.3 t/ha)</SelectItem>
-              <SelectItem value="Rainfed" style={{ fontFamily: "'Poppins', sans-serif" }}>Rainfed</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label style={{ fontFamily: "'Poppins', sans-serif" }}>
-            ENSO State
-            {isActive && pendingParams.ensoState !== undefined && (
-              <span className="ml-2 text-[10px] text-warning">(queued)</span>
-            )}
-          </Label>
-          <Select value={displayParams.ensoState} onValueChange={(v) => updateParams({ ensoState: v as ENSOState })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="El Niño" style={{ fontFamily: "'Poppins', sans-serif" }}>El Niño (-0.4 t/ha)</SelectItem>
-              <SelectItem value="Neutral" style={{ fontFamily: "'Poppins', sans-serif" }}>Neutral</SelectItem>
-              <SelectItem value="La Niña" style={{ fontFamily: "'Poppins', sans-serif" }}>La Niña (+0.3 t/ha)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label style={{ fontFamily: "'Poppins', sans-serif" }}>
-            Typhoon Probability: {params.typhoonProbability}%
-            <span className="ml-2 text-[10px] text-primary">(live)</span>
-          </Label>
-          <Slider value={[params.typhoonProbability]} onValueChange={([v]) => updateParams({ typhoonProbability: v })} min={0} max={40} step={1} />
-        </div>
-
-        <div className="space-y-2">
-          <Label style={{ fontFamily: "'Poppins', sans-serif" }}>
-            Scenario Presets
-            {isActive && (
-              <span className="ml-2 text-[10px] text-warning">(queued)</span>
-            )}
-          </Label>
-          <div className="grid grid-cols-2 gap-2">
-            {presets.map((preset) => (
-              <button
-                key={preset.label}
-                onClick={() => {
-                  setActivePresetLabel(preset.label);
-                  updateParams(preset.params);
-                }}
-                className={`text-xs px-2 py-2 rounded-md border transition-colors ${
-                  activePresetLabel === preset.label
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'border-border text-muted-foreground hover:text-foreground hover:border-primary'
-                }`}
-                style={{ fontFamily: "'Poppins', sans-serif" }}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-          <div className="text-[10px] text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
-            Presets apply to the next cycle when a run is active.
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label style={{ fontFamily: "'Poppins', sans-serif" }}>
-            Crop Cycles
-            {isActive && pendingParams.cyclesTarget !== undefined && (
-              <span className="ml-2 text-[10px] text-warning">(queued)</span>
-            )}
-          </Label>
-          <div className="flex items-center gap-2">
-            <Input
-              type="number"
-              min={1}
-              max={500}
-              step={1}
-              value={displayParams.cyclesTarget}
-              onChange={(e) => {
-                const raw = e.target.value;
-                if (raw === '') return;
-                const value = Number(raw);
-                if (Number.isNaN(value)) return;
-                const clamped = Math.min(500, Math.max(1, Math.round(value)));
-                updateParams({ cyclesTarget: clamped });
-              }}
-              className="w-24"
-            />
-            <span className="text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>1-500 cycles</span>
-          </div>
-          <Slider
-            value={[displayParams.cyclesTarget]}
-            onValueChange={([v]) => updateParams({ cyclesTarget: v })}
-            min={1}
-            max={500}
-            step={1}
-          />
-        </div>
-
-        <div className="rounded-lg border border-border bg-muted/50 p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <Label style={{ fontFamily: "'Poppins', sans-serif" }}>Speed</Label>
-            <div className="text-sm font-semibold" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{speedMultiplier}x</div>
-          </div>
-          <Slider value={[speedMultiplier]} onValueChange={([v]) => setSpeed(v)} min={0.5} max={20} step={0.5} />
-          <div className="grid grid-cols-3 gap-2">
-            {[0.5, 1, 2, 5, 10, 20].map((s) => (
-              <button
-                key={s}
-                onClick={() => setSpeed(s)}
-                className={`text-xs px-2 py-1 rounded-md border transition-colors ${
-                  speedMultiplier === s
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'border-border text-muted-foreground hover:border-primary'
-                }`}
-              >
-                {SPEED_LABELS[s]}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex gap-2 pt-1 flex-wrap">
-          {isIdle || isFinished ? (
-            <>
-              <Button onClick={start} className="flex-1 gap-2">
-                <Play className="w-4 h-4" /> Start
-              </Button>
-              <Button onClick={startInstant} variant="secondary" className="flex-1 gap-2">
-                <Zap className="w-4 h-4" /> Instant
-              </Button>
-            </>
-          ) : isRunning ? (
-            <Button onClick={pause} variant="outline" className="flex-1 gap-2">
-              <Pause className="w-4 h-4" /> Pause
-            </Button>
-          ) : (
-            <Button onClick={resume} className="flex-1 gap-2">
-              <Play className="w-4 h-4" /> Resume
-            </Button>
-          )}
-          <Button onClick={reset} variant="outline" className="gap-2" size="icon">
-            <RotateCcw className="w-4 h-4" />
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+  const controlRail = (
+    <ControlRail
+      isActive={isActive}
+      isRunning={isRunning}
+      isPaused={isPaused}
+      isFinished={isFinished}
+      mode={mode}
+      params={params}
+      pendingParams={pendingParams}
+      displayParams={displayParams}
+      speedMultiplier={speedMultiplier}
+      presets={presets}
+      activePresetLabel={activePresetLabel}
+      setActivePresetLabel={setActivePresetLabel}
+      updateParams={updateParams}
+      setSpeed={setSpeed}
+      start={start}
+      startInstant={startInstant}
+      pause={pause}
+      resume={resume}
+      reset={reset}
+    />
   );
 
   if (isIdle) {
     return (
       <div className="flex flex-col items-center gap-6">
-        <div className="max-w-md w-full">{controlCard}</div>
-        <div className="max-w-2xl w-full">{overviewCard}</div>
+        <div className="max-w-md w-full">{controlRail}</div>
+        <div className="max-w-3xl w-full">{overviewCard}</div>
         <div className="text-sm text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
           Press Start to begin a day-by-day run, or Instant for quick cycle sweeps. The engine keeps running when you switch tabs.
         </div>
@@ -1003,55 +1549,19 @@ export default function SimulationTab() {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-6">
-      <div className="lg:sticky lg:top-24 h-fit">
-        {controlCard}
+    <div className="grid grid-cols-1 lg:grid-cols-[340px_minmax(0,1fr)] gap-6">
+      <div className="lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto pr-1">
+        {controlRail}
       </div>
 
       <div className="space-y-6">
         <WeatherScene weather={currentWeather} growthProgress={dayProgress} />
 
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          {(
-            isFarmer
-              ? [
-                  { label: 'Cycle', value: cycleLabel },
-                  { label: 'Day', value: `${displayDay} / ${params.daysPerCycle}` },
-                  { label: 'Season', value: currentSeason },
-                  { label: 'Current Yield', value: currentYield != null ? formatYieldValue(currentYield) : '---' },
-                  { label: 'Running Mean', value: runningMean > 0 ? formatYieldValue(runningMean) : '---' },
-                  { label: 'Natural Variability', value: `${formatSacks(noiseSdValue)} sacks SD` },
-                  { label: 'Low Yield Flags (<40 sacks)', value: lowYieldFlagText },
-                  { label: 'Low Yield Risk', value: `${(lowYieldProb * 100).toFixed(1)}%` },
-                ]
-              : [
-                  { label: 'Cycle', value: cycleLabel },
-                  { label: 'Day', value: `${displayDay} / ${params.daysPerCycle}` },
-                  { label: 'Season', value: currentSeason },
-                  { label: 'Current Yield', value: currentYield != null ? `${currentYield.toFixed(2)} t/ha` : '---' },
-                  { label: 'Running Mean', value: runningMean > 0 ? `${runningMean.toFixed(2)} t/ha` : '---' },
-                  { label: 'Running Mean Sacks', value: runningMean > 0 ? `${formatSacks(runningMean)} sacks` : '---' },
-                  { label: 'Random Noise SD', value: `${noiseSdValue.toFixed(2)} t/ha` },
-                  { label: 'Low Yield Flags (<2.0 t/ha)', value: lowYieldFlagText },
-                ]
-          ).concat([{ label: 'Confidence', value: confidence.label }]).map((stat) => (
-            <Card key={stat.label} className="border-border">
-              <CardContent className="pt-4 pb-3">
-                <div className="text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>{stat.label}</div>
-                <div
-                  className={`text-lg font-bold ${stat.label === 'Confidence' ? confidence.tone : ''}`}
-                  style={{ fontFamily: "'Space Grotesk', sans-serif" }}
-                >
-                  {stat.value}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <MetricGrid items={metricItems} />
 
-        <WeatherTimeline
-          timeline={currentCycleWeatherTimeline}
-          typhoonSeverityTimeline={currentCycleTyphoonSeverityTimeline ?? []}
+        <WeatherCalendar
+          timeline={calendarWeatherTimeline}
+          typhoonSeverityTimeline={calendarTyphoonSeverityTimeline}
           daysPerCycle={params.daysPerCycle}
           cycleStartDate={cycleStartDate}
           firstCycleStartDate={firstCycleStartDate}
@@ -1060,17 +1570,7 @@ export default function SimulationTab() {
           currentCycleLabel={cyclePhase}
           typhoonProbability={params.typhoonProbability}
         />
-
-        <div className="flex justify-end gap-2">
-          <Button onClick={handlePrint} variant="outline" className="gap-2">
-            <Printer className="w-4 h-4" /> Print Report
-          </Button>
-          {isFinished && (
-            <Button onClick={handleExport} variant="outline" className="gap-2">
-              <Download className="w-4 h-4" /> Export CSV
-            </Button>
-          )}
-        </div>
+        <ReportActions isFinished={isFinished} onPrint={handlePrint} onExport={handleExport} />
 
         <div className="print-only">
           <h1 style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Philippine Rice Yield Weather Simulator</h1>
@@ -1121,143 +1621,161 @@ export default function SimulationTab() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card className="border-border">
-            <CardHeader><CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Yield Over Cycles</CardTitle></CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={240}>
-                <ComposedChart data={yieldChartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="cycle" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                  <YAxis fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontFamily: 'Poppins, sans-serif', fontSize: 12 }}
-                    formatter={(value: number) => yieldTooltipFormatter(value)}
-                  />
-                  <Area dataKey="p5" stackId="range" stroke="none" fill="transparent" isAnimationActive={false} />
-                  <Area dataKey="band" stackId="range" stroke="none" fill={BAND_FILL} isAnimationActive={false} />
-                  <Line type="monotone" dataKey="yield" stroke={YIELD_COLOR} dot={false} strokeWidth={2} />
-                </ComposedChart>
-              </ResponsiveContainer>
-              <ChartLegend
-                items={[
-                  { label: 'Actual Yield', color: YIELD_COLOR, variant: 'line' },
-                  { label: 'Expected Range (P5-P95)', color: BAND_LEGEND, variant: 'fill' },
-                ]}
-              />
-              {isFarmer && (
-                <div className="mt-3 text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
-                  Farmer note: This line shows the harvest per cycle. The shaded band is the most likely range based on all cycles completed so far.
-                </div>
-              )}
-              <div className="mt-2 grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: "'Poppins', sans-serif" }}>
-                <div>Latest yield: {latestYield != null ? formatYieldValue(latestYield) : '---'}</div>
-                <div>Average so far: {runningMean > 0 ? formatYieldValue(runningMean) : '---'}</div>
-                <div>Expected range: {summaryNumbers ? formatYieldRange(summaryNumbers.percentile5, summaryNumbers.percentile95) : '---'}</div>
-                <div>Completed cycles: {cycleRecords.length}</div>
+          <ChartCard
+            title="Yield Over Cycles"
+            caption={`Cycles: ${cycleRecords.length}`}
+            insight={(
+              <InsightLine tone={yieldTrendInsight.tone}>
+                {yieldTrendInsight.icon}
+                <span>{yieldTrendInsight.text}</span>
+              </InsightLine>
+            )}
+          >
+            <ResponsiveContainer width="100%" height={240}>
+              <ComposedChart data={yieldChartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--ring-soft))" />
+                <XAxis dataKey="cycle" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                <YAxis fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(value: number) => yieldTooltipFormatter(value)} />
+                <Area dataKey="p5" stackId="range" stroke="none" fill="transparent" isAnimationActive={false} />
+                <Area dataKey="band" stackId="range" stroke="none" fill={BAND_FILL} isAnimationActive={false} />
+                <Line type="monotone" dataKey="yield" stroke={YIELD_COLOR} dot={false} strokeWidth={2} />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <ChartLegend
+              items={[
+                { label: 'Actual Yield', color: YIELD_COLOR, variant: 'line' },
+                { label: 'Expected Range (P5-P95)', color: BAND_LEGEND, variant: 'fill' },
+              ]}
+            />
+            {isFarmer && (
+              <div className="text-xs text-muted-foreground">
+                Farmer note: This line shows the harvest per cycle. The shaded band is the most likely range based on completed cycles.
               </div>
-            </CardContent>
-          </Card>
+            )}
+            <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+              <div>Latest yield: {latestYield != null ? formatYieldValue(latestYield) : '---'}</div>
+              <div>Average so far: {runningMean > 0 ? formatYieldValue(runningMean) : '---'}</div>
+              <div>Expected range: {summaryNumbers ? formatYieldRange(summaryNumbers.percentile5, summaryNumbers.percentile95) : '---'}</div>
+              <div>Completed cycles: {cycleRecords.length}</div>
+            </div>
+          </ChartCard>
 
-          <Card className="border-border">
-            <CardHeader><CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Daily Weather Frequency</CardTitle></CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={weatherData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="weather" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                  <YAxis fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8 }} />
-                  <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                    {weatherData.map((entry) => (
-                      <Cell key={entry.weather} fill={WEATHER_COLORS[entry.weather as WeatherType]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-              <ChartLegend
-                items={(Object.keys(WEATHER_COLORS) as WeatherType[]).map((key) => ({
-                  label: key,
-                  color: WEATHER_COLORS[key],
-                  variant: 'fill',
-                }))}
-              />
-              {isFarmer && (
-                <div className="mt-3 text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
-                  Farmer note: This counts every simulated day across all cycles. Bigger bars mean more days with that weather.
-                </div>
-              )}
-              {isFarmer && (
-                <div className="mt-2 text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
-                  Weather storyline: {weatherStory}
-                </div>
-              )}
-              <div className="mt-2 grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: "'Poppins', sans-serif" }}>
-                {(Object.keys(dailyWeatherCounts) as WeatherType[]).map((key) => (
-                  <div key={key}>
-                    {key}: {dailyWeatherCounts[key]} days{weatherPercents ? ` (${weatherPercents[key].toFixed(1)}%)` : ''}
-                  </div>
-                ))}
+          <ChartCard
+            title="Daily Weather Frequency"
+            caption="Across all simulated days"
+            insight={(
+              <InsightLine tone={weatherInsight.tone}>
+                {weatherInsight.icon}
+                <span>{weatherInsight.text}</span>
+              </InsightLine>
+            )}
+          >
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={weatherData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--ring-soft))" />
+                <XAxis dataKey="weather" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                <YAxis fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Bar dataKey="count" radius={[6, 6, 0, 0]}>
+                  {weatherData.map((entry) => (
+                    <Cell key={entry.weather} fill={WEATHER_COLORS[entry.weather as WeatherType]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            <ChartLegend
+              items={(Object.keys(WEATHER_COLORS) as WeatherType[]).map((key) => ({
+                label: key,
+                color: WEATHER_COLORS[key],
+                variant: 'fill',
+              }))}
+            />
+            {isFarmer && (
+              <div className="text-xs text-muted-foreground">
+                Farmer note: Bigger bars mean more days with that weather across all cycles.
               </div>
-            </CardContent>
-          </Card>
+            )}
+            {isFarmer && (
+              <div className="text-xs text-muted-foreground">
+                Weather storyline: {weatherStory}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+              {(Object.keys(dailyWeatherCounts) as WeatherType[]).map((key) => (
+                <div key={key}>
+                  {key}: {dailyWeatherCounts[key]} days{weatherPercents ? ` (${weatherPercents[key].toFixed(1)}%)` : ''}
+                </div>
+              ))}
+            </div>
+          </ChartCard>
 
-          <Card className="border-border">
-            <CardHeader><CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Yield Distribution</CardTitle></CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={histogramBins}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="label" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                  <YAxis fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontFamily: 'Poppins, sans-serif', fontSize: 12 }} />
-                  <Bar dataKey="count" fill={YIELD_COLOR} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-              <ChartLegend items={[{ label: 'Yield Count', color: YIELD_COLOR, variant: 'fill' }]} />
-              {isFarmer && (
-                <div className="mt-3 text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
-                  Farmer note: This shows how often each yield range appears. Taller bars mean that yield happens more often.
-                </div>
-              )}
-              <div className="mt-2 grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: "'Poppins', sans-serif" }}>
-                <div>Min: {summaryNumbers ? formatYieldValue(summaryNumbers.min) : '---'}</div>
-                <div>Max: {summaryNumbers ? formatYieldValue(summaryNumbers.max) : '---'}</div>
-                <div>Mean: {summaryNumbers ? formatYieldValue(summaryNumbers.mean) : '---'}</div>
-                <div>Std dev: {summaryNumbers ? formatYieldValue(summaryNumbers.std) : '---'}</div>
-                <div>P5: {summaryNumbers ? formatYieldValue(summaryNumbers.percentile5) : '---'}</div>
-                <div>P95: {summaryNumbers ? formatYieldValue(summaryNumbers.percentile95) : '---'}</div>
+          <ChartCard
+            title="Yield Distribution"
+            caption="Histogram of cycle yields"
+            insight={(
+              <InsightLine tone={distributionInsight.tone}>
+                {distributionInsight.icon}
+                <span>{distributionInsight.text}</span>
+              </InsightLine>
+            )}
+          >
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={histogramBins}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--ring-soft))" />
+                <XAxis dataKey="label" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                <YAxis fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Bar dataKey="count" fill={YIELD_COLOR} radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+            <ChartLegend items={[{ label: 'Yield Count', color: YIELD_COLOR, variant: 'fill' }]} />
+            {isFarmer && (
+              <div className="text-xs text-muted-foreground">
+                Farmer note: Taller bars mean that yield happens more often.
               </div>
-            </CardContent>
-          </Card>
+            )}
+            <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+              <div>Min: {summaryNumbers ? formatYieldValue(summaryNumbers.min) : '---'}</div>
+              <div>Max: {summaryNumbers ? formatYieldValue(summaryNumbers.max) : '---'}</div>
+              <div>Mean: {summaryNumbers ? formatYieldValue(summaryNumbers.mean) : '---'}</div>
+              <div>Std dev: {summaryNumbers ? formatYieldValue(summaryNumbers.std) : '---'}</div>
+              <div>P5: {summaryNumbers ? formatYieldValue(summaryNumbers.percentile5) : '---'}</div>
+              <div>P95: {summaryNumbers ? formatYieldValue(summaryNumbers.percentile95) : '---'}</div>
+            </div>
+          </ChartCard>
 
           {downsampledMean.length > 1 && (
-            <Card className="border-border">
-              <CardHeader><CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Running Mean</CardTitle></CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={240}>
-                  <LineChart data={downsampledMean}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="cycle" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                    <YAxis fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontFamily: 'Poppins, sans-serif', fontSize: 12 }}
-                      formatter={(value: number) => yieldTooltipFormatter(value)}
-                    />
-                    <Line type="monotone" dataKey="mean" stroke={MEAN_COLOR} dot={false} strokeWidth={2} />
-                  </LineChart>
-                </ResponsiveContainer>
-                <ChartLegend items={[{ label: 'Running Mean', color: MEAN_COLOR, variant: 'line' }]} />
-                {isFarmer && (
-                  <div className="mt-3 text-xs text-muted-foreground" style={{ fontFamily: "'Poppins', sans-serif" }}>
-                    Farmer note: The line smooths the averages as more cycles complete, showing your long-term trend.
-                  </div>
-                )}
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: "'Poppins', sans-serif" }}>
-                  <div>Latest mean: {latestMean != null ? formatYieldValue(latestMean) : '---'}</div>
-                  <div>Cycles averaged: {yieldHistoryOverTime.length}</div>
+            <ChartCard
+              title="Running Mean"
+              caption={`${yieldHistoryOverTime.length} cycles`}
+              insight={(
+                <InsightLine tone={meanInsight.tone}>
+                  {meanInsight.icon}
+                  <span>{meanInsight.text}</span>
+                </InsightLine>
+              )}
+            >
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={downsampledMean}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--ring-soft))" />
+                  <XAxis dataKey="cycle" fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                  <YAxis fontSize={10} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(value: number) => yieldTooltipFormatter(value)} />
+                  <Line type="monotone" dataKey="mean" stroke={MEAN_COLOR} dot={false} strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+              <ChartLegend items={[{ label: 'Running Mean', color: MEAN_COLOR, variant: 'line' }]} />
+              {isFarmer && (
+                <div className="text-xs text-muted-foreground">
+                  Farmer note: The line smooths the averages as more cycles complete, showing your long-term trend.
                 </div>
-              </CardContent>
-            </Card>
+              )}
+              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                <div>Latest mean: {latestMean != null ? formatYieldValue(latestMean) : '---'}</div>
+                <div>Cycles averaged: {yieldHistoryOverTime.length}</div>
+              </div>
+            </ChartCard>
           )}
         </div>
 
@@ -1275,3 +1793,5 @@ export default function SimulationTab() {
     </div>
   );
 }
+
+
