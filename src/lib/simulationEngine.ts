@@ -2,6 +2,14 @@
   getSeason,
   getWeather,
   getTyphoonSeverity,
+  BASE_YIELDS,
+  DEFAULT_DAYS_PER_CYCLE,
+  TYPHOON_YIELDS,
+  IRRIGATION_ADJ,
+  ENSO_ADJ,
+  NOISE_SD,
+  LOW_YIELD_THRESHOLD,
+  SACKS_PER_TON,
   WeatherType,
   TyphoonSeverity,
   IrrigationType,
@@ -20,7 +28,7 @@ export interface EngineParams {
   ensoState: ENSOState;
   typhoonProbability: number;  // 0-40 (%)
   cyclesTarget: number;
-  daysPerCycle: number;        // default 120
+  daysPerCycle: number;        // default DEFAULT_DAYS_PER_CYCLE
 }
 
 export interface HistogramBin {
@@ -102,7 +110,7 @@ type Listener = (snap: EngineSnapshot) => void;
 
 const BINS_STEP = 0.5;
 const BINS_MAX = 5.5;
-const MAX_SERIES = 400;
+const MAX_SERIES = 500;
 const GAP_DAYS = 30;
 
 function initBins(): HistogramBin[] {
@@ -118,19 +126,21 @@ function addToBin(bins: HistogramBin[], y: number) {
   if (idx >= 0) bins[idx].count++;
 }
 
+function percentile(sorted: number[], p: number): number {
+  const n = sorted.length;
+  if (n === 0) return 0;
+  if (n === 1) return sorted[0];
+  const pos = (n - 1) * p;
+  const lower = Math.floor(pos);
+  const upper = Math.ceil(pos);
+  if (lower === upper) return sorted[lower];
+  const weight = pos - lower;
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+}
+
 // --------------------------------------------------
 
-const BASE_YIELDS: Record<WeatherType, number> = {
-  Dry: 2.0, Normal: 3.0, Wet: 3.3, Typhoon: 1.2,
-};
-const TYPHOON_YIELDS: Record<TyphoonSeverity, number> = {
-  Moderate: 1.4,
-  Severe: 0.8,
-};
-const IRRIGATION_ADJ: Record<IrrigationType, number> = { Irrigated: 0.3, Rainfed: 0 };
-const ENSO_ADJ: Record<ENSOState, number> = { 'El Niño': -0.4, Neutral: 0, 'La Niña': 0.3 };
-
-function gaussianNoise(mean = 0, sd = 0.2): number {
+function gaussianNoise(mean = 0, sd = NOISE_SD): number {
   let u = 0, v = 0;
   while (u === 0) u = Math.random();
   while (v === 0) v = Math.random();
@@ -198,7 +208,7 @@ class SimulationEngine {
     ensoState: 'Neutral',
     typhoonProbability: 15,
     cyclesTarget: 100,
-    daysPerCycle: 120,
+    daysPerCycle: DEFAULT_DAYS_PER_CYCLE,
   };
   private pendingParams: Partial<EngineParams> = {};
 
@@ -593,7 +603,7 @@ class SimulationEngine {
     const nDelta2 = noise - this.noiseMean;
     this.noiseM2 += nDelta * nDelta2;
 
-    if (yld < 2.0) this.lowYieldCount++;
+    if (yld < LOW_YIELD_THRESHOLD) this.lowYieldCount++;
     if (yld < this.minYield) this.minYield = yld;
     if (yld > this.maxYield) this.maxYield = yld;
 
@@ -607,7 +617,7 @@ class SimulationEngine {
     const cycleRecord: CycleRecord = {
       cycleIndex: this.currentCycleIndex + 1,
       yieldTons: yld,
-      yieldSacks: yld * 20,
+      yieldSacks: yld * SACKS_PER_TON,
       season,
       weather: dominantWeather,
       dominantTyphoonSeverity,
@@ -679,13 +689,15 @@ class SimulationEngine {
     const se = n > 0 ? sd / Math.sqrt(n) : 0;
     const ciLow = mean - 1.96 * se;
     const ciHigh = mean + 1.96 * se;
+    const p5 = percentile(sorted, 0.05);
+    const p95 = percentile(sorted, 0.95);
     return {
       mean,
       std: sd,
       min: this.minYield === Infinity ? 0 : this.minYield,
       max: this.maxYield === -Infinity ? 0 : this.maxYield,
-      percentile5: sorted[Math.floor(n * 0.05)] ?? 0,
-      percentile95: sorted[Math.floor(n * 0.95)] ?? 0,
+      percentile5: p5,
+      percentile95: p95,
       ciLow,
       ciHigh,
       ciWidth: ciHigh - ciLow,

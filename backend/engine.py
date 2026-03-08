@@ -441,6 +441,20 @@ class SimulationEngine:
             return 0.0
         return math.sqrt(self.noiseM2 / self.welfordCount)
 
+    def _percentile(self, sorted_y: List[float], p: float) -> float:
+        n = len(sorted_y)
+        if n == 0:
+            return 0.0
+        if n == 1:
+            return sorted_y[0]
+        pos = (n - 1) * p
+        lo = int(math.floor(pos))
+        hi = int(math.ceil(pos))
+        if lo == hi:
+            return sorted_y[lo]
+        weight = pos - lo
+        return (sorted_y[lo] * (1 - weight)) + (sorted_y[hi] * weight)
+
     def _compute_summary(self):
         if not self.allYields:
             return None
@@ -451,13 +465,15 @@ class SimulationEngine:
         se = sd / math.sqrt(n) if n > 0 else 0.0
         ci_low = mean - 1.96 * se
         ci_high = mean + 1.96 * se
+        p5 = self._percentile(sorted_y, 0.05)
+        p95 = self._percentile(sorted_y, 0.95)
         return {
             "mean": mean,
             "std": sd,
             "min": 0 if self.minYield == float("inf") else self.minYield,
             "max": 0 if self.maxYield == float("-inf") else self.maxYield,
-            "percentile5": sorted_y[int(n * 0.05)] if n > 0 else 0,
-            "percentile95": sorted_y[int(n * 0.95)] if n > 0 else 0,
+            "percentile5": p5,
+            "percentile95": p95,
             "ciLow": ci_low,
             "ciHigh": ci_high,
             "ciWidth": ci_high - ci_low,

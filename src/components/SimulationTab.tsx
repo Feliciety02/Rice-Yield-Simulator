@@ -286,9 +286,7 @@ function ReportActions({
       </CardHeader>
       <CardContent className="space-y-2">
         <div className="flex flex-wrap gap-2">
-          <Button onClick={onPrint} variant="outline" className="gap-2">
-            <Printer className="w-4 h-4" /> Print Report
-          </Button>
+        <div className="flex flex-wrap gap-2">
           <Button onClick={onExport} variant="outline" className="gap-2" disabled={!isFinished}>
             <Download className="w-4 h-4" /> Export CSV
           </Button>
@@ -400,6 +398,10 @@ function WeatherCalendar({
   }, [anchorMonthIndex, anchorYear]);
 
   const minDate = isFinished ? firstDate : startDate;
+  const minYear = minDate.getFullYear();
+  const minMonth = minDate.getMonth();
+  const maxYear = maxDate ? maxDate.getFullYear() : null;
+  const maxMonth = maxDate ? maxDate.getMonth() : null;
 
   const monthName = MONTH_NAMES[calendarMonth];
   const daysInSelectedMonth = daysInMonth(calendarYear, calendarMonth);
@@ -1104,9 +1106,20 @@ export default function SimulationTab() {
   useEffect(() => {
     if (currentCycleWeatherTimeline.length > 0) {
       lastTimelineRef.current = currentCycleWeatherTimeline;
-      lastSeverityRef.current = currentCycleTyphoonSeverityTimeline ?? [];
+    }
+    if (currentCycleTyphoonSeverityTimeline && currentCycleTyphoonSeverityTimeline.length > 0) {
+      lastSeverityRef.current = currentCycleTyphoonSeverityTimeline;
     }
   }, [currentCycleWeatherTimeline, currentCycleTyphoonSeverityTimeline]);
+
+  useEffect(() => {
+    if (lastCompletedCycleWeatherTimeline.length > 0) {
+      lastTimelineRef.current = lastCompletedCycleWeatherTimeline;
+    }
+    if (lastCompletedCycleTyphoonSeverityTimeline.length > 0) {
+      lastSeverityRef.current = lastCompletedCycleTyphoonSeverityTimeline;
+    }
+  }, [lastCompletedCycleWeatherTimeline, lastCompletedCycleTyphoonSeverityTimeline]);
 
   const completedWeatherTimeline =
     lastCompletedCycleWeatherTimeline.length > 0
@@ -1340,40 +1353,28 @@ export default function SimulationTab() {
       }
       return value;
     };
-
-    const buildTable = (title: string, headers: string[], dataRows: (string | number)[][]) => {
-      const width = Math.max(1, headers.length, ...dataRows.map((row) => row.length));
-      const empty = (count: number) => Array.from({ length: count }, () => '');
-      const block: string[][] = [];
-      block.push([title, ...empty(width - 1)]);
-      if (headers.length > 0) {
-        block.push([...headers, ...empty(width - headers.length)]);
-      }
-      dataRows.forEach((row) => {
-        const normalized = row.map((cell) => (cell == null ? '' : String(cell)));
-        block.push([...normalized, ...empty(width - normalized.length)]);
-      });
-      return block;
+    const empty = (count: number) => Array.from({ length: count }, () => '');
+    const normalizeRow = (cells: (string | number)[], width: number) => {
+      const normalized = cells.map((cell) => (cell == null ? '' : String(cell)));
+      return [...normalized, ...empty(width - normalized.length)];
     };
-
-    const mergeTables = (tables: string[][][], gap = 1) => {
-      const widths = tables.map((table) => table[0]?.length ?? 0);
-      const maxRows = Math.max(...tables.map((table) => table.length));
-      const gapCells = Array.from({ length: gap }, () => '');
-      const merged: string[][] = [];
-      for (let rowIndex = 0; rowIndex < maxRows; rowIndex += 1) {
-        const row: string[] = [];
-        tables.forEach((table, tableIndex) => {
-          const width = widths[tableIndex];
-          const tableRow = table[rowIndex] ?? Array.from({ length: width }, () => '');
-          row.push(...tableRow);
-          if (tableIndex < tables.length - 1) {
-            row.push(...gapCells);
-          }
-        });
-        merged.push(row);
+    const rows: string[][] = [];
+    const appendSection = (
+      title: string,
+      interpretationText: string,
+      headers: string[],
+      dataRows: (string | number)[][]
+    ) => {
+      const width = Math.max(1, headers.length, ...dataRows.map((row) => row.length), interpretationText ? 2 : 1);
+      rows.push([`=== ${title} ===`, ...empty(width - 1)]);
+      if (interpretationText) {
+        rows.push(normalizeRow(['Interpretation', interpretationText], width));
       }
-      return merged;
+      if (headers.length > 0) {
+        rows.push(normalizeRow(headers, width));
+      }
+      dataRows.forEach((row) => rows.push(normalizeRow(row, width)));
+      rows.push(empty(width));
     };
 
     const s = summary;
@@ -1382,8 +1383,20 @@ export default function SimulationTab() {
     const ciHigh = s?.ciHigh ?? (runningMean + 1.96 * runningSd / Math.sqrt(Math.max(1, n)));
 
     const totalDays = Object.values(dailyWeatherCounts).reduce((a, b) => a + b, 0) || 1;
-    const cycleTable = buildTable(
+    const totalTyphoonDays = dailyTyphoonSeverityCounts.Moderate + dailyTyphoonSeverityCounts.Severe;
+    const cycleInterpretation = 'Each row is one completed crop cycle with final yield and conditions.';
+    const summaryInterpretation = 'Summary statistics across all completed cycles to show average yield and variability.';
+    const weatherInterpretation = weatherInsight.text;
+    const typhoonInterpretation = totalTyphoonDays > 0
+      ? `Severe typhoon days are ${dailyTyphoonSeverityCounts.Severe} of ${totalTyphoonDays} typhoon days.`
+      : 'No typhoon days recorded yet.';
+    const yieldSeriesInterpretation = yieldTrendInsight.text;
+    const expectedRangeInterpretation = 'P5-P95 shows the most likely yield range per cycle. Narrower bands mean higher confidence.';
+    const runningMeanInterpretation = meanInsight.text;
+    const histogramInterpretation = distributionInsight.text;
+    appendSection(
       'Cycle Records',
+      cycleInterpretation,
       [
         'Cycle',
         'Final Yield (t/ha)',
@@ -1414,28 +1427,41 @@ export default function SimulationTab() {
       ]))
     );
 
+    const meanValue = s?.mean ?? runningMean;
+    const stdValue = s?.std ?? runningSd;
+    const minValue = s?.min ?? 0;
+    const maxValue = s?.max ?? 0;
+    const p5Value = s?.percentile5 ?? 0;
+    const p95Value = s?.percentile95 ?? 0;
+
     const summaryRows: (string | number)[][] = [
-      ['Completed Cycles', n],
-      ['Mean Yield (t/ha)', (s?.mean ?? runningMean).toFixed(4)],
-      ['Std Deviation (t/ha)', (s?.std ?? runningSd).toFixed(4)],
-      ['Min Yield (t/ha)', (s?.min ?? 0).toFixed(4)],
-      ['Max Yield (t/ha)', (s?.max ?? 0).toFixed(4)],
-      ['5th Percentile (t/ha)', (s?.percentile5 ?? 0).toFixed(4)],
-      ['95th Percentile (t/ha)', (s?.percentile95 ?? 0).toFixed(4)],
-      ['95% CI Lower (t/ha)', ciLow.toFixed(4)],
-      ['95% CI Upper (t/ha)', ciHigh.toFixed(4)],
+      ['Completed Cycles', n, ''],
+      ['Mean Yield (t/ha)', meanValue.toFixed(4), formatSacks(meanValue)],
+      ['Std Deviation (t/ha)', stdValue.toFixed(4), formatSacks(stdValue)],
+      ['Min Yield (t/ha)', minValue.toFixed(4), formatSacks(minValue)],
+      ['Max Yield (t/ha)', maxValue.toFixed(4), formatSacks(maxValue)],
+      ['5th Percentile (t/ha)', p5Value.toFixed(4), formatSacks(p5Value)],
+      ['95th Percentile (t/ha)', p95Value.toFixed(4), formatSacks(p95Value)],
+      ['95% CI Lower (t/ha)', ciLow.toFixed(4), formatSacks(ciLow)],
+      ['95% CI Upper (t/ha)', ciHigh.toFixed(4), formatSacks(ciHigh)],
     ];
     if (s) {
-      summaryRows.push(['CI Width (t/ha)', s.ciWidth.toFixed(4)]);
-      summaryRows.push(['Weather Variability SD (t/ha)', s.deterministicSd.toFixed(4)]);
-      summaryRows.push(['Random Noise SD (t/ha)', s.noiseSd.toFixed(4)]);
+      summaryRows.push(['CI Width (t/ha)', s.ciWidth.toFixed(4), formatSacks(s.ciWidth)]);
+      summaryRows.push(['Weather Variability SD (t/ha)', s.deterministicSd.toFixed(4), formatSacks(s.deterministicSd)]);
+      summaryRows.push(['Random Noise SD (t/ha)', s.noiseSd.toFixed(4), formatSacks(s.noiseSd)]);
     }
-    summaryRows.push(['Low Yield Probability (%)', (lowYieldProb * 100).toFixed(2)]);
+    summaryRows.push(['Low Yield Probability (%)', (lowYieldProb * 100).toFixed(2), '']);
 
-    const summaryTable = buildTable('Summary', ['Metric', 'Value'], summaryRows);
+    appendSection(
+      'Summary',
+      summaryInterpretation,
+      ['Metric', 'Value (t/ha)', 'Value (sacks)'],
+      summaryRows
+    );
 
-    const weatherTable = buildTable(
+    appendSection(
       'Daily Weather Counts',
+      weatherInterpretation,
       ['Weather', 'Days', 'Percent'],
       (Object.keys(dailyWeatherCounts) as WeatherType[]).map((key) => {
         const count = dailyWeatherCounts[key];
@@ -1444,54 +1470,57 @@ export default function SimulationTab() {
       })
     );
 
-    const typhoonTable = buildTable(
+    appendSection(
       'Typhoon Severity Counts',
-      ['Severity', 'Days'],
+      typhoonInterpretation,
+      ['Severity', 'Days', 'Percent of Typhoon Days'],
       [
-        ['Moderate', dailyTyphoonSeverityCounts.Moderate],
-        ['Severe', dailyTyphoonSeverityCounts.Severe],
+        ['Moderate', dailyTyphoonSeverityCounts.Moderate, totalTyphoonDays ? ((dailyTyphoonSeverityCounts.Moderate / totalTyphoonDays) * 100).toFixed(2) : '0.00'],
+        ['Severe', dailyTyphoonSeverityCounts.Severe, totalTyphoonDays ? ((dailyTyphoonSeverityCounts.Severe / totalTyphoonDays) * 100).toFixed(2) : '0.00'],
       ]
     );
 
-    const yieldSeriesTable = buildTable(
+    appendSection(
       'Yield Over Cycles',
-      ['Cycle', 'Yield (t/ha)'],
-      yieldSeries.map((p) => ([p.cycle, p.yield.toFixed(4)]))
+      yieldSeriesInterpretation,
+      ['Cycle', 'Yield (t/ha)', 'Yield (sacks)'],
+      yieldSeries.map((p) => ([p.cycle, p.yield.toFixed(4), formatSacks(p.yield)]))
     );
 
-    const expectedRangeTable = buildTable(
+    appendSection(
       'Expected Range (P5-P95)',
-      ['Cycle', 'Mean', 'P5', 'P95'],
-      yieldBandSeries.map((p) => ([p.cycle, p.mean.toFixed(4), p.p5.toFixed(4), p.p95.toFixed(4)]))
+      expectedRangeInterpretation,
+      ['Cycle', 'Mean (t/ha)', 'P5 (t/ha)', 'P95 (t/ha)', 'Mean (sacks)', 'P5 (sacks)', 'P95 (sacks)'],
+      yieldBandSeries.map((p) => ([
+        p.cycle,
+        p.mean.toFixed(4),
+        p.p5.toFixed(4),
+        p.p95.toFixed(4),
+        formatSacks(p.mean),
+        formatSacks(p.p5),
+        formatSacks(p.p95),
+      ]))
     );
 
-    const runningMeanTable = buildTable(
+    appendSection(
       'Running Mean',
-      ['Cycle', 'Mean (t/ha)'],
-      yieldHistoryOverTime.map((value, index) => ([index + 1, value.toFixed(4)]))
+      runningMeanInterpretation,
+      ['Cycle', 'Mean (t/ha)', 'Mean (sacks)'],
+      yieldHistoryOverTime.map((value, index) => ([index + 1, value.toFixed(4), formatSacks(value)]))
     );
 
-    const histogramTable = buildTable(
+    appendSection(
       'Yield Distribution',
-      ['Bin Start (t/ha)', 'Count'],
-      histogramBins.map((bin) => ([bin.label, bin.count]))
+      histogramInterpretation,
+      ['Bin Start (t/ha)', 'Bin Range (sacks)', 'Count'],
+      histogramBins.map((bin) => {
+        const start = Number(bin.label);
+        const end = start + 0.5;
+        return [bin.label, `${formatSacks(start)}-${formatSacks(end)} sacks`, bin.count];
+      })
     );
 
-    const mergedRows = mergeTables(
-      [
-        cycleTable,
-        summaryTable,
-        weatherTable,
-        typhoonTable,
-        yieldSeriesTable,
-        expectedRangeTable,
-        runningMeanTable,
-        histogramTable,
-      ],
-      1
-    );
-
-    const csvContent = mergedRows
+    const csvContent = rows
       .map((row) => row.map((cell) => csvEscape(cell)).join(','))
       .join('\n');
 
@@ -1506,6 +1535,7 @@ export default function SimulationTab() {
   }, [
     cycleRecords, lowYieldProb, runningMean, runningSd, summary,
     dailyWeatherCounts, dailyTyphoonSeverityCounts, yieldSeries, yieldBandSeries, yieldHistoryOverTime, histogramBins,
+    weatherInsight, yieldTrendInsight, distributionInsight, meanInsight, isFarmer,
   ]);
 
   const handlePrint = useCallback(() => {
@@ -1793,5 +1823,3 @@ export default function SimulationTab() {
     </div>
   );
 }
-
-

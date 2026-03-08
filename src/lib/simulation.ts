@@ -9,7 +9,38 @@ export interface SimulationParams {
   ensoState: ENSOState;
   typhoonProbability: number;
   numCycles: number;
+  daysPerCycle?: number;
+  seed?: number;
 }
+
+export const DEFAULT_DAYS_PER_CYCLE = 120;
+export const NOISE_SD = 0.2;
+export const SACKS_PER_TON = 20;
+export const LOW_YIELD_THRESHOLD = 2.0;
+export const HIGH_YIELD_THRESHOLD = 3.0;
+
+export const BASE_YIELDS: Record<WeatherType, number> = {
+  Dry: 2.0,
+  Normal: 3.0,
+  Wet: 3.3,
+  Typhoon: 1.2,
+};
+
+export const TYPHOON_YIELDS: Record<TyphoonSeverity, number> = {
+  Moderate: 1.4,
+  Severe: 0.8,
+};
+
+export const IRRIGATION_ADJ: Record<IrrigationType, number> = {
+  Irrigated: 0.3,
+  Rainfed: 0,
+};
+
+export const ENSO_ADJ: Record<ENSOState, number> = {
+  'El Niño': -0.4,
+  Neutral: 0,
+  'La Niña': 0.3,
+};
 
 export interface CycleResult {
   cycle: number;
@@ -75,10 +106,23 @@ export function getSeason(month: number): Season {
   return getSeasonBlend(month).label;
 }
 
-function normalRandom(mean: number, stdDev: number): number {
+type RandomSource = () => number;
+
+function createSeededRng(seed: number): RandomSource {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6D2B79F5;
+    let r = t;
+    r = Math.imul(r ^ (r >>> 15), r | 1);
+    r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function normalRandom(mean: number, stdDev: number, rng: RandomSource = Math.random): number {
   let u = 0, v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
+  while (u === 0) u = rng();
+  while (v === 0) v = rng();
   return mean + stdDev * Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
 
@@ -104,9 +148,9 @@ export function getWeatherWeights(month: number, typhoonProb: number) {
   };
 }
 
-export function getWeather(month: number, typhoonProb: number): WeatherType {
+export function getWeather(month: number, typhoonProb: number, rng: RandomSource = Math.random): WeatherType {
   const weights = getWeatherWeights(month, typhoonProb);
-  const r = Math.random();
+  const r = rng();
   let acc = weights.Dry;
   if (r < acc) return 'Dry';
   acc += weights.Normal;
@@ -116,40 +160,15 @@ export function getWeather(month: number, typhoonProb: number): WeatherType {
   return 'Typhoon';
 }
 
-export function getTyphoonSeverity(): TyphoonSeverity {
+export function getTyphoonSeverity(rng: RandomSource = Math.random): TyphoonSeverity {
   const weights = DEFAULT_PROFILE.severity;
-  const r = Math.random();
+  const r = rng();
   return r < weights.Severe ? 'Severe' : 'Moderate';
 }
 
 export function getTyphoonSeverityWeights() {
   return DEFAULT_PROFILE.severity;
 }
-
-const BASE_YIELDS: Record<WeatherType, number> = {
-  Dry: 2.0,
-  Normal: 3.0,
-  Wet: 3.3,
-  Typhoon: 1.2,
-};
-
-const TYPHOON_YIELDS: Record<TyphoonSeverity, number> = {
-  Moderate: 1.4,
-  Severe: 0.8,
-};
-
-const IRRIGATION_ADJ: Record<IrrigationType, number> = {
-  Irrigated: 0.3,
-  Rainfed: 0,
-};
-
-const ENSO_ADJ: Record<ENSOState, number> = {
-  'El Niño': -0.4,
-  Neutral: 0,
-  'La Niña': 0.3,
-};
-
-const DAYS_PER_CYCLE = 120;
 
 function monthForDay(startMonth: number, dayIndex: number) {
   const date = new Date(2020, startMonth - 1, 1);
@@ -159,17 +178,19 @@ function monthForDay(startMonth: number, dayIndex: number) {
 
 export function simulateCycle(
   cycle: number,
-  params: SimulationParams
+  params: SimulationParams,
+  rng: RandomSource = Math.random
 ): CycleResult {
   const season = getSeason(params.plantingMonth);
   const weatherCounts: Record<WeatherType, number> = { Dry: 0, Normal: 0, Wet: 0, Typhoon: 0 };
   const typhoonSeverityCounts: Record<TyphoonSeverity, number> = { Moderate: 0, Severe: 0 };
-  for (let d = 0; d < DAYS_PER_CYCLE; d++) {
+  const daysPerCycle = params.daysPerCycle ?? DEFAULT_DAYS_PER_CYCLE;
+  for (let d = 0; d < daysPerCycle; d++) {
     const month = monthForDay(params.plantingMonth, d);
-    const w = getWeather(month, params.typhoonProbability / 100);
+    const w = getWeather(month, params.typhoonProbability / 100, rng);
     weatherCounts[w]++;
     if (w === 'Typhoon') {
-      const severity = getTyphoonSeverity();
+      const severity = getTyphoonSeverity(rng);
       typhoonSeverityCounts[severity]++;
     }
   }
@@ -188,9 +209,9 @@ export function simulateCycle(
     typhoonSeverityCounts.Moderate * TYPHOON_YIELDS.Moderate +
     typhoonSeverityCounts.Severe * TYPHOON_YIELDS.Severe +
     unclassifiedTyphoon * BASE_YIELDS.Typhoon;
-  const baseYield = baseSum / DAYS_PER_CYCLE;
+  const baseYield = baseSum / daysPerCycle;
   const adj = IRRIGATION_ADJ[params.irrigationType] + ENSO_ADJ[params.ensoState];
-  const noise = normalRandom(0, 0.2);
+  const noise = normalRandom(0, NOISE_SD, rng);
   const finalYield = Math.max(0, baseYield + adj + noise);
 
   return {
@@ -207,15 +228,48 @@ export function simulateCycle(
 
 export function runSimulation(params: SimulationParams): SimulationResults {
   const cycles: CycleResult[] = [];
+  const rng = params.seed !== undefined ? createSeededRng(params.seed) : Math.random;
   for (let i = 0; i < params.numCycles; i++) {
-    cycles.push(simulateCycle(i + 1, params));
+    cycles.push(simulateCycle(i + 1, params, rng));
   }
   return computeResults(cycles);
+}
+
+function percentile(sorted: number[], p: number): number {
+  const n = sorted.length;
+  if (n === 0) return 0;
+  if (n === 1) return sorted[0];
+  const pos = (n - 1) * p;
+  const lower = Math.floor(pos);
+  const upper = Math.ceil(pos);
+  if (lower === upper) return sorted[lower];
+  const weight = pos - lower;
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
 }
 
 export function computeResults(cycles: CycleResult[]): SimulationResults {
   const yields = cycles.map((c) => c.finalYield);
   const n = yields.length;
+  const emptyWeather: Record<WeatherType, number> = {
+    Dry: 0,
+    Normal: 0,
+    Wet: 0,
+    Typhoon: 0,
+  };
+  if (n === 0) {
+    return {
+      cycles,
+      meanYield: 0,
+      stdDev: 0,
+      minYield: 0,
+      maxYield: 0,
+      lowYieldProbability: 0,
+      weatherFrequencies: emptyWeather,
+      percentile5: 0,
+      percentile95: 0,
+      confidenceInterval: [0, 0],
+    };
+  }
   const mean = yields.reduce((a, b) => a + b, 0) / n;
   const variance = yields.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
   const stdDev = Math.sqrt(variance);
@@ -229,8 +283,8 @@ export function computeResults(cycles: CycleResult[]): SimulationResults {
   };
   cycles.forEach((c) => weatherFrequencies[c.weather]++);
 
-  const p5 = sorted[Math.floor(n * 0.05)] ?? 0;
-  const p95 = sorted[Math.floor(n * 0.95)] ?? 0;
+  const p5 = percentile(sorted, 0.05);
+  const p95 = percentile(sorted, 0.95);
   const se = stdDev / Math.sqrt(n);
 
   return {
@@ -239,7 +293,7 @@ export function computeResults(cycles: CycleResult[]): SimulationResults {
     stdDev,
     minYield: Math.min(...yields),
     maxYield: Math.max(...yields),
-    lowYieldProbability: yields.filter((y) => y < 2.0).length / n,
+    lowYieldProbability: yields.filter((y) => y < LOW_YIELD_THRESHOLD).length / n,
     weatherFrequencies,
     percentile5: p5,
     percentile95: p95,

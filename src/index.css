@@ -7,42 +7,42 @@
 @layer base {
   :root {
     --background: 140 20% 97%;
-    --foreground: 160 30% 10%;
+    --foreground: 142 22% 14%;
 
-    --card: 140 15% 99%;
+    --card: 0 0% 100%;
     --card-foreground: 160 30% 10%;
 
-    --surface: 140 24% 96%;
+    --surface: 142 30% 97%;
     --surface-foreground: 160 30% 10%;
     --surface-muted: 140 18% 92%;
 
     --popover: 140 15% 99%;
     --popover-foreground: 160 30% 10%;
 
-    --primary: 160 65% 18%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 142 52% 28%;
+    --primary-foreground: 0 0% 98%;
 
     --secondary: 145 30% 92%;
     --secondary-foreground: 160 30% 10%;
 
-    --muted: 140 12% 93%;
-    --muted-foreground: 160 10% 44%;
+    --muted: 140 18% 96%;
+    --muted-foreground: 142 12% 35%;
 
-    --accent: 152 76% 80%;
-    --accent-foreground: 160 65% 12%;
+    --accent: 142 55% 45%;
+    --accent-foreground: 0 0% 98%;
 
-    --destructive: 0 65% 52%;
+    --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 155 15% 88%;
+    --border: 142 14% 86%;
     --input: 155 15% 88%;
-    --ring: 160 65% 18%;
+    --ring: 142 55% 45%;
     --ring-soft: 152 35% 82%;
 
-    --weather-dry: 40 70% 58%;
-    --weather-normal: 150 18% 52%;
-    --weather-wet: 175 45% 45%;
-    --weather-typhoon: 0 55% 46%;
+    --weather-dry: 38 92% 50%;
+    --weather-normal: 142 35% 40%;
+    --weather-wet: 154 55% 38%;
+    --weather-typhoon: 0 72% 51%;
 
     --radius: 1rem;
 
@@ -62,17 +62,17 @@
     --sky-cloudy: 210 10% 58%;
     --sky-storm: 220 15% 32%;
     --rain: 210 50% 52%;
-    --sun: 45 85% 58%;
+    --sun: 38 92% 55%;
     --field-green: 100 35% 42%;
     --field-dry: 42 28% 56%;
-    --warning: 38 80% 52%;
+    --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;
-    --info: 200 70% 52%;
+    --info: 204 85% 45%;
     --info-foreground: 0 0% 100%;
 
     /* Chart greens scale */
     --chart-1: 160 65% 18%;
-    --chart-2: 152 50% 36%;
+    --chart-2: 154 55% 38%;
     --chart-3: 145 40% 48%;
     --chart-4: 140 45% 58%;
     --chart-5: 0 55% 52%;
@@ -241,6 +241,21 @@
 
   .no-scrollbar::-webkit-scrollbar {
     display: none;
+  }
+
+  .agri-surface {
+    background: hsl(var(--card) / 0.92);
+    border: 1px solid hsl(var(--border) / 0.7);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.06);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  .agri-section {
+    background:
+      radial-gradient(circle at 12% 10%, hsl(var(--primary) / 0.10), transparent 52%),
+      radial-gradient(circle at 88% 12%, hsl(var(--accent) / 0.12), transparent 45%),
+      hsl(var(--surface));
   }
 }
 

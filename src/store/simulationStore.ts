@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { EngineSnapshot, EngineParams } from '@/lib/simulationEngine';
+import { DEFAULT_DAYS_PER_CYCLE } from '@/lib/simulation';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
 
@@ -30,7 +31,7 @@ const initialSnapshot: EngineSnapshot = {
     ensoState: 'Neutral',
     typhoonProbability: 15,
     cyclesTarget: 100,
-    daysPerCycle: 120,
+    daysPerCycle: DEFAULT_DAYS_PER_CYCLE,
   },
   pendingParams: {},
   currentCycleIndex: 0,

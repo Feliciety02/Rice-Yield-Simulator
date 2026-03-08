@@ -242,7 +242,7 @@ export default function ModelFlowTab() {
   const isHorizontal = layout === 'horizontal';
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       <div className="text-center space-y-1 mb-8">
         <h2 className="text-2xl font-semibold text-foreground">Simulation Model Flow</h2>
         <p className="text-sm text-muted-foreground">

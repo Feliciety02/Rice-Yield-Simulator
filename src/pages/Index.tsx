@@ -42,7 +42,7 @@ const Index = () => {
             style={{ animationDelay: '1.5s' }}
           />
         </div>
-        <div className="max-w-6xl mx-auto px-5 relative">
+        <div className="max-w-7xl mx-auto px-4 relative">
           <div className="flex items-center h-14">
             {/* Brand */}
             <div
@@ -114,7 +114,7 @@ const Index = () => {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-5 py-8">
+      <main className="max-w-7xl mx-auto px-4 py-8">
         {activeTab === 'home'       && <AboutTab />}
         {activeTab === 'simulation' && <SimulationTab />}
         {activeTab === 'analysis'   && <AnalysisTab />}
