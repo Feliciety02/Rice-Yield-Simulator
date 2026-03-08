@@ -781,62 +781,123 @@ export default function AnalysisTab() {
     const riskOutOf = Math.round(lowYieldProb * 100);
     const sampleDays = params.daysPerCycle ?? DEFAULT_DAYS_PER_CYCLE;
     const lowThresholdLabel = `${LOW_YIELD_THRESHOLD.toFixed(1)} t/ha (${toSacks(LOW_YIELD_THRESHOLD)} sacks)`;
+    const seasonLabel = getSeason(cycleStartMonth);
+    const riskBand = lowYieldProb > 0.30 ? 'high' : lowYieldProb > 0.15 ? 'moderate' : 'low';
+    const baselineGap = baseline - modelBaseline;
+    const irrigationGap = irrigationNumbers.Irrigated - irrigationNumbers.Rainfed;
+    const irrigationGapAbs = Math.abs(irrigationGap);
+    const ensoEntries = [
+      { label: 'El Niño', value: ensoNumbers['El Niño'] },
+      { label: 'Neutral', value: ensoNumbers.Neutral },
+      { label: 'La Niña', value: ensoNumbers['La Niña'] },
+    ];
+    const bestEnso = [...ensoEntries].sort((a, b) => b.value - a.value)[0];
+    const worstEnso = [...ensoEntries].sort((a, b) => a.value - b.value)[0];
+    const currentEnsoValue = ensoEntries.find((entry) => entry.label === params.ensoState)?.value ?? ensoNumbers.Neutral;
+    const ensoSpread = bestEnso.value - worstEnso.value;
+    const typhoonLow = typhoonNumbers['Low (5%)'];
+    const typhoonCurrent = typhoonNumbers['Mid (current)'];
+    const typhoonHigh = typhoonNumbers['High (35%)'];
+    const typhoonSpread = Math.max(0, typhoonLow - typhoonHigh);
+    const currentStormPenalty = Math.max(0, typhoonLow - typhoonCurrent);
+    const total = mcTotals.total || 1;
+    const lowPct = total > 0 ? (mcTotals.low / total) * 100 : 0;
+    const midPct = total > 0 ? (mcTotals.mid / total) * 100 : 0;
+    const highPct = total > 0 ? (mcTotals.high / total) * 100 : 0;
+    const dominantBucket = [
+      { label: bucketLabels.low.tHa, pct: lowPct, count: mcTotals.low, kind: 'low' },
+      { label: bucketLabels.mid.tHa, pct: midPct, count: mcTotals.mid, kind: 'mid' },
+      { label: bucketLabels.high.tHa, pct: highPct, count: mcTotals.high, kind: 'high' },
+    ].sort((a, b) => b.count - a.count)[0];
+    const mcRangeWidth = mcRange ? Math.max(0, mcRange.p95 - mcRange.p5) : 0;
+    const strongestLever = [
+      { label: 'Irrigation', delta: irrigationGapAbs },
+      { label: 'ENSO phase', delta: ensoSpread },
+      { label: 'Typhoon probability', delta: typhoonSpread },
+    ].sort((a, b) => b.delta - a.delta)[0];
     const baselineInterpretation =
-      `${interpretation.headline}. This table summarizes your current baseline yield under the selected season, irrigation, ENSO, and typhoon probability. ` +
-      `Baseline yield is the best single-number expectation for a ${sampleDays}-day crop cycle, while the model baseline is the climate estimate before calibration. ` +
-      `Low-yield risk shows how often harvest could fall below ${lowThresholdLabel}.`;
+      `${interpretation.headline}. This table summarizes your current baseline yield under the selected ${seasonLabel.toLowerCase()}, ${params.irrigationType.toLowerCase()} irrigation setting, ${params.ensoState} phase, and ${params.typhoonProbability.toFixed(1)}% typhoon probability. ` +
+      `Baseline yield is ${baseline.toFixed(4)} t/ha (${toSacks(baseline)} sacks) for a ${sampleDays}-day crop cycle, while the model-only climate estimate is ${modelBaseline.toFixed(4)} t/ha (${toSacks(modelBaseline)} sacks). ` +
+      `The calibration factor is ${calibration.toFixed(4)}x, meaning live results are currently ${Math.abs(baselineGap).toFixed(4)} t/ha ${baselineGap >= 0 ? 'above' : 'below'} the uncalibrated estimate, and low-yield risk is ${riskPct}% for the ${lowThresholdLabel} threshold.`;
     const baselineConclusion =
-      'Use the baseline as your planning anchor; if low-yield risk is high, build buffers in budget, inputs, or timing.';
+      baseline >= LOW_YIELD_THRESHOLD
+        ? `The calibrated baseline stays above the low-yield threshold, but risk is still ${riskBand}, so the lower tail should remain part of planning.`
+        : `The calibrated baseline is already below the low-yield threshold, which means this scenario is structurally weak unless one of the main levers improves.`;
     const baselineRecommendation =
-      'Set a target yield near the baseline, prepare a low-yield contingency plan, and confirm input timing based on the cycle start month.';
+      `Use ${baseline.toFixed(2)} t/ha as the central planning case, keep a contingency plan for the ${riskPct}% low-yield tail, and confirm input timing against the ${seasonLabel.toLowerCase()} cycle window before locking decisions.`;
     const irrigationInterpretation =
-      'This table compares expected yield when only irrigation changes. The gap between irrigated and rainfed is the estimated gain from reliable water access. ' +
-      'The sacks column shows the harvest difference in farmer-friendly units.';
+      `This table isolates irrigation while holding season, ENSO, and typhoon assumptions constant. Irrigated yield is ${irrigationNumbers.Irrigated.toFixed(2)} t/ha and rainfed yield is ${irrigationNumbers.Rainfed.toFixed(2)} t/ha, so the irrigation gap is ${irrigationGapAbs.toFixed(2)} t/ha (${toSacks(irrigationGapAbs)} sacks). ` +
+      `That gap estimates the value of reliable water access under the current baseline rather than under a generic national average.`;
     const irrigationConclusion =
-      'If the irrigated gap is large, prioritize water access, scheduling, or moisture conservation to protect yield.';
+      irrigationGapAbs >= 0.5
+        ? 'Water access is a major yield lever in this scenario, so irrigation reliability likely matters more than small input tweaks.'
+        : 'The irrigation gap is present but not dominant, which suggests water management helps but may not be the single strongest lever.';
     const irrigationRecommendation =
-      'If you are rainfed, prioritize water-saving practices, field leveling, and backup water sources; if irrigated, schedule water at critical growth stages.';
+      params.irrigationType === 'Rainfed'
+        ? 'Because the current setup is rainfed, prioritize field leveling, water-saving practices, and any feasible backup water source before increasing other inputs.'
+        : 'Because the current setup is irrigated, protect the irrigation advantage by scheduling water around critical growth stages and reducing avoidable delivery gaps.';
     const ensoInterpretation =
-      'This table shows how El Nino, Neutral, and La Nina phases shift yield with all other inputs held constant. ' +
-      'El Nino typically reduces yield from drier conditions, while La Nina can raise yields with more rainfall. ' +
-      'Use this when seasonal forecasts change.';
+      `This table compares ENSO phases with all other settings fixed. ${bestEnso.label} gives the highest expected yield at ${bestEnso.value.toFixed(2)} t/ha, while ${worstEnso.label} gives the lowest at ${worstEnso.value.toFixed(2)} t/ha, for a total spread of ${ensoSpread.toFixed(2)} t/ha (${toSacks(ensoSpread)} sacks). ` +
+      `The active ENSO setting, ${params.ensoState}, is currently estimated at ${currentEnsoValue.toFixed(2)} t/ha.`;
     const ensoConclusion =
-      'When an El Nino outlook appears, plan more conservative inputs and water management; La Nina may allow higher targets.';
+      params.ensoState === worstEnso.label
+        ? `The current ENSO setting is the weakest of the three tested phases, so seasonal climate is already acting as a drag on yield.`
+        : params.ensoState === bestEnso.label
+        ? `The current ENSO setting is the strongest of the three tested phases, so downside risk is more likely to come from storms or water constraints than ENSO alone.`
+        : 'The current ENSO setting sits in the middle of the tested range, so seasonal shifts in either direction could still move results meaningfully.';
     const ensoRecommendation =
-      'Follow seasonal forecasts: prepare drought mitigation for El Nino, improve drainage and pest scouting for La Nina, and maintain balanced inputs for Neutral.';
+      'Track seasonal forecasts early: prepare drought and irrigation protection for El Niño, drainage and pest response for La Niña, and balanced input planning for Neutral conditions.';
     const typhoonInterpretation =
-      'This table keeps all inputs constant and changes only typhoon probability. It highlights how storm risk can depress yields even with good irrigation. ' +
-      'Compare low, current, and high scenarios to understand downside exposure.';
+      `This table changes only typhoon probability. Expected yield falls from ${typhoonLow.toFixed(2)} t/ha at 5% storm probability to ${typhoonHigh.toFixed(2)} t/ha at 35%, a total sensitivity of ${typhoonSpread.toFixed(2)} t/ha (${toSacks(typhoonSpread)} sacks). ` +
+      `The current scenario at ${params.typhoonProbability.toFixed(1)}% sits at ${typhoonCurrent.toFixed(2)} t/ha, which is ${currentStormPenalty.toFixed(2)} t/ha below the low-storm case.`;
     const typhoonConclusion =
-      'If higher storm probability sharply lowers yield, invest in drainage, storm protection, and risk financing.';
+      typhoonSpread >= irrigationGapAbs && typhoonSpread >= ensoSpread
+        ? 'Storm probability is the strongest modeled downside driver in this scenario and deserves first-order planning attention.'
+        : 'Storm probability reduces yield materially, but it is not the only lever shaping the current outcome.';
     const typhoonRecommendation =
-      'Strengthen bunds and drainage, secure crop insurance if available, and schedule planting to avoid peak storm months when feasible.';
+      'Strengthen bunds and drainage, secure crop insurance if available, and avoid peak storm windows when planting dates can be adjusted without creating new drought risk.';
     const mcBucketInterpretation =
-      'This table summarizes completed cycles into low, moderate, and high yield buckets. Percent is the share of cycles in each bucket and count is how many seasons produced that outcome. ' +
-      'It helps you judge how often poor or strong harvests occur.';
+      `This table summarizes completed cycles into low, moderate, and high yield buckets. The largest bucket is ${dominantBucket.label} at ${dominantBucket.pct.toFixed(2)}% (${dominantBucket.count} of ${total} cycles). ` +
+      'Percent shows how often each outcome occurs, while count shows how many simulated seasons produced it.';
     const mcBucketConclusion =
-      'A larger low bucket means higher downside risk; plan conservative cash flow or stagger plantings.';
+      dominantBucket.kind === 'low'
+        ? 'The Monte Carlo distribution is downside-heavy, so poor harvests are not isolated outliers in the current setup.'
+        : dominantBucket.kind === 'high'
+        ? 'The Monte Carlo distribution leans favorable, meaning strong harvests occur more often than weak ones under current assumptions.'
+        : 'The Monte Carlo distribution centers in the moderate bucket, so mid-range harvests are more typical than either bad or exceptional outcomes.';
     const mcBucketRecommendation =
-      'If low outcomes dominate, reduce input exposure, diversify timing, and focus on risk-reducing practices before chasing higher yields.';
+      lowPct >= 35
+        ? 'Keep cash flow and input exposure conservative, consider staggered planting dates, and focus on risk reduction before optimizing for maximum yield.'
+        : 'Use the dominant bucket as the planning case and treat the low and high buckets as downside and upside bounds for operations.';
     const mcRangeInterpretation =
-      'P5-P95 is the likely yield range from completed cycles; most seasons should fall inside. The mean is the average across cycles, and wider ranges mean more uncertainty.';
+      `P5-P95 is the likely yield range from completed cycles. In the current run, that range is ${mcRange ? `${mcRange.p5.toFixed(4)} to ${mcRange.p95.toFixed(4)} t/ha` : 'not available'}, with a width of ${mcRange ? `${mcRangeWidth.toFixed(4)} t/ha (${toSacks(mcRangeWidth)} sacks)` : 'n/a'}. ` +
+      `${mcRange ? `The mean across completed cycles is ${mcRange.mean.toFixed(4)} t/ha (${toSacks(mcRange.mean)} sacks).` : ''} Wider ranges mean more uncertainty around what any one season may deliver.`;
     const mcRangeConclusion =
-      'Use P5 as a worst-case planning point and keep targets near the mean rather than the top end.';
+      !mcRange
+        ? 'The range cannot be interpreted until completed cycles accumulate.'
+        : mcRangeWidth >= 1
+        ? 'The likely range is wide, so single-season outcomes can move far from the mean and should be planned conservatively.'
+        : 'The likely range is reasonably contained, which improves confidence in the mean as a planning anchor.';
     const mcRangeRecommendation =
-      'Budget using the P5 value, set sales targets near the mean, and revisit plans if the range widens after more cycles.';
+      'Budget using P5, set production or sales targets near the mean, and revisit decisions if later cycles widen the range or shift the mean materially.';
     const plainLanguageInterpretation =
-      'This section explains the terms in simple language so farmers and field teams can discuss results consistently. ' +
-      'It links technical metrics to practical decisions like expected sacks and risk levels.';
+      `This section explains the numbers in simple language so farmers, advisers, and field teams can discuss the current result consistently. ` +
+      `It translates the current baseline of ${toSacks(baseline)} sacks and low-yield risk of ${riskPct}% into planning language that non-technical readers can use.`;
     const plainLanguageConclusion =
-      'Use these definitions when sharing results with partners, cooperatives, or lenders.';
+      'Shared definitions reduce the chance that partners, cooperatives, or lenders misread uncertainty as guaranteed output.';
     const plainLanguageRecommendation =
-      'Share this section in meetings so everyone uses the same meaning for risk, ranges, and yield targets.';
+      'Use this section when presenting results in meetings so everyone treats baseline, risk, and expected range as planning terms rather than promises.';
     const calibratedInterpretation =
-      `${interpretation.note} The takeaways below are calibrated to the current baseline so comparisons stay realistic for the current season.`;
+      `${interpretation.note} The current baseline is ${baseline.toFixed(4)} t/ha with ${riskPct}% low-yield risk, and the largest modeled lever is ${strongestLever.label.toLowerCase()} at ${strongestLever.delta.toFixed(2)} t/ha (${toSacks(strongestLever.delta)} sacks). ` +
+      'The takeaways below are calibrated to the current baseline so scenario comparisons stay realistic for the current season rather than floating around an unadjusted climate average.';
     const calibratedConclusion =
-      'Focus on the takeaways with the biggest yield shifts; those are the strongest levers for planning.';
+      `${strongestLever.label} is currently the strongest planning lever because it moves yield more than the other tested scenario changes.`;
     const calibratedRecommendation =
-      'Pick one or two highest-impact levers (irrigation, storm risk, or ENSO planning) and plan concrete actions before the next cycle.';
+      strongestLever.label === 'Irrigation'
+        ? 'Prioritize water access and irrigation scheduling before smaller agronomic optimizations.'
+        : strongestLever.label === 'Typhoon probability'
+        ? 'Prioritize storm avoidance, drainage, and financial protection before assuming favorable yield targets.'
+        : 'Prioritize ENSO-responsive planning by matching inputs, water, and drainage strategy to the expected seasonal phase.';
 
     appendSection(
       'Baseline Snapshot',
@@ -895,7 +956,6 @@ export default function AnalysisTab() {
       ]
     );
 
-    const total = mcTotals.total || 1;
     appendSection(
       'Monte Carlo Buckets',
       mcBucketInterpretation,

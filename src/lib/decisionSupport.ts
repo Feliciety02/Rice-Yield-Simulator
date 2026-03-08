@@ -13,9 +13,17 @@ export type DecisionAlert = {
   text: string;
 };
 
+export type DecisionReason = {
+  title: string;
+  value: string;
+  tone: DecisionTone | 'info';
+  text: string;
+};
+
 export type DecisionSupportResult = {
   label: DecisionLabel;
   tone: DecisionTone;
+  reasons: DecisionReason[];
   actions: string[];
   alerts: DecisionAlert[];
 };
@@ -51,6 +59,54 @@ export function buildDecisionSupport(input: {
     tone === 'caution' ? 'Caution' :
     'Safe to plant';
 
+  const reasons: DecisionReason[] = [];
+  reasons.push({
+    title: 'Low-yield risk',
+    value: `${(lowYieldProb * 100).toFixed(1)}%`,
+    tone: lowYieldProb >= 0.35 ? 'risk' : lowYieldProb >= 0.2 ? 'caution' : 'safe',
+    text:
+      lowYieldProb >= 0.35
+        ? 'Too many seasons fall below the low-harvest line.'
+        : lowYieldProb >= 0.2
+        ? 'Low harvest is possible often enough to require caution.'
+        : 'Only a small share of seasons fall into low harvest.',
+  });
+  reasons.push({
+    title: 'Expected range',
+    value: expectedRange ? `${expectedRange.p5.toFixed(2)} to ${expectedRange.p95.toFixed(2)} t/ha` : 'Not ready',
+    tone: rangeWidth >= 1.8 ? 'risk' : rangeWidth >= 1.2 ? 'caution' : expectedRange ? 'safe' : 'info',
+    text:
+      !expectedRange
+        ? 'More completed cycles are needed before the harvest range is reliable.'
+        : rangeWidth >= 1.8
+        ? 'The harvest range is wide, so outcomes are unstable.'
+        : rangeWidth >= 1.2
+        ? 'The harvest range is moderately wide, so expect uneven seasons.'
+        : 'The harvest range is fairly tight, so seasons are more consistent.',
+  });
+  reasons.push({
+    title: 'Typhoon frequency',
+    value: `${(typhoonFrequency * 100).toFixed(1)}% of days`,
+    tone: typhoonFrequency >= 0.25 ? 'risk' : typhoonFrequency >= 0.15 ? 'caution' : 'safe',
+    text:
+      typhoonFrequency >= 0.25
+        ? 'Storm-heavy runs are pushing the recommendation into high risk.'
+        : typhoonFrequency >= 0.15
+        ? 'Storm days are frequent enough to weaken planning confidence.'
+        : 'Storm exposure is present but not dominating the run.',
+  });
+  reasons.push({
+    title: 'Completed cycles',
+    value: `${cycles}`,
+    tone: cycles < 20 ? 'info' : cycles < 50 ? 'caution' : 'safe',
+    text:
+      cycles < 20
+        ? 'The sample is still small, so treat the recommendation as early guidance.'
+        : cycles < 50
+        ? 'The sample is usable, but more cycles would tighten confidence.'
+        : 'The sample size is strong enough to support a firmer recommendation.',
+  });
+
   const actions: string[] = [];
   if (tone === 'risk') {
     actions.push('Consider shifting the planting window to avoid peak storm months.');
@@ -79,7 +135,7 @@ export function buildDecisionSupport(input: {
     alerts.push({ level: 'warning', text: 'Harvest range is wide, so results are uncertain.' });
   }
 
-  return { label, tone, actions, alerts };
+  return { label, tone, reasons, actions, alerts };
 }
 
 export function rankScenarios(input: {

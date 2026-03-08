@@ -40,7 +40,8 @@ import { Slider } from '@/components/ui/slider';
 import WeatherScene from './WeatherScene';
 import ChartLegend from './ChartLegend';
 import { useSimulationStore } from '@/store/simulationStore';
-import { IrrigationType, ENSOState, WeatherType, TyphoonSeverity, getSeason, getWeatherWeights } from '@/lib/simulation';
+import { LOW_YIELD_THRESHOLD, IrrigationType, ENSOState, WeatherType, TyphoonSeverity, getSeason, getWeatherWeights } from '@/lib/simulation';
+import { buildDecisionSupport, rankScenarios, type ScenarioRank } from '@/lib/decisionSupport';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Cell, LineChart, Line, Area, ComposedChart,
@@ -83,6 +84,7 @@ const SPEED_LABELS: Record<number, string> = {
 };
 
 const TONS_TO_SACKS = 20;
+const SCENARIO_SAMPLE_SIZE = 120;
 
 const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
@@ -286,9 +288,11 @@ function ReportActions({
       </CardHeader>
       <CardContent className="space-y-2">
         <div className="flex flex-wrap gap-2">
-        <div className="flex flex-wrap gap-2">
           <Button onClick={onExport} variant="outline" className="gap-2" disabled={!isFinished}>
             <Download className="w-4 h-4" /> Export CSV
+          </Button>
+          <Button onClick={onPrint} variant="outline" className="gap-2" disabled={!isFinished}>
+            <Printer className="w-4 h-4" /> Print Report
           </Button>
         </div>
         {!isFinished && (
@@ -303,6 +307,23 @@ function ReportActions({
 
 function formatSacks(tons: number) {
   return Math.round(tons * TONS_TO_SACKS);
+}
+
+function scheduleIdle(work: () => void) {
+  if (typeof window === 'undefined') {
+    work();
+    return () => {};
+  }
+  const anyWindow = window as Window & {
+    requestIdleCallback?: (cb: IdleRequestCallback, opts?: { timeout: number }) => number;
+    cancelIdleCallback?: (id: number) => void;
+  };
+  if (anyWindow.requestIdleCallback) {
+    const id = anyWindow.requestIdleCallback(work, { timeout: 350 });
+    return () => anyWindow.cancelIdleCallback?.(id);
+  }
+  const id = window.setTimeout(work, 0);
+  return () => window.clearTimeout(id);
 }
 
 function WeatherIcon({ weather, className }: { weather: WeatherType; className?: string }) {
@@ -926,7 +947,14 @@ function ControlRail({
   );
 }
 
-function FarmerInterpretation({
+type FarmerAdvisory = {
+  riskLevel: 'low' | 'moderate' | 'high';
+  situation: string;
+  meaning: string;
+  action: string;
+};
+
+function buildFarmerAdvisory({
   meanYield,
   lowYieldProb,
   currentYield,
@@ -940,7 +968,7 @@ function FarmerInterpretation({
   irrigationType: IrrigationType;
   typhoonFrequency: number;
   useSacks: boolean;
-}) {
+}): FarmerAdvisory {
   const meanSacks = formatSacks(meanYield);
   const currentSacks = currentYield != null ? formatSacks(currentYield) : null;
   const riskPct = (lowYieldProb * 100).toFixed(1);
@@ -954,7 +982,9 @@ function FarmerInterpretation({
       ? `${currentSacks} sacks`
       : `${currentYield.toFixed(2)} t/ha (${currentSacks} sacks)`
     : null;
-  const lowYieldThreshold = useSacks ? '40 sacks' : '2.0 t/ha';
+  const lowYieldThreshold = useSacks
+    ? `${formatSacks(LOW_YIELD_THRESHOLD)} sacks`
+    : `${LOW_YIELD_THRESHOLD.toFixed(1)} t/ha`;
 
   const situation =
     `Average harvest is ${meanText}. ` +
@@ -981,52 +1011,7 @@ function FarmerInterpretation({
     action = 'Irrigation is adding a yield advantage. Maintain water access to keep this benefit.';
   }
 
-  const borderColor =
-    riskLevel === 'low' ? 'hsl(var(--primary))' :
-    riskLevel === 'moderate' ? 'hsl(var(--warning))' :
-    'hsl(var(--destructive))';
-
-  return (
-    <Card className={CARD_CLASS} style={{ borderLeftWidth: 4, borderLeftColor: borderColor }}>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between gap-3">
-          <CardTitle className="text-base" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-            Farmer Advisory
-          </CardTitle>
-          <span
-            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
-              riskLevel === 'low'
-                ? 'bg-primary/10 text-primary'
-                : riskLevel === 'moderate'
-                ? 'bg-warning/15 text-warning'
-                : 'bg-destructive/15 text-destructive'
-            }`}
-          >
-            {riskLevel === 'low'
-              ? <ShieldCheck className="w-3 h-3" />
-              : riskLevel === 'moderate'
-              ? <AlertTriangle className="w-3 h-3" />
-              : <Tornado className="w-3 h-3" />}
-            {riskLevel} risk
-          </span>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4 text-sm" style={{ fontFamily: "'Poppins', sans-serif" }}>
-        <div className="rounded-xl bg-surface/80 ring-1 ring-border/60 p-3">
-          <div className="font-semibold text-foreground mb-1">Current Situation</div>
-          <p className="text-muted-foreground leading-relaxed">{situation}</p>
-        </div>
-        <div className="rounded-xl bg-surface/80 ring-1 ring-border/60 p-3">
-          <div className="font-semibold text-foreground mb-1">What This Means</div>
-          <p className="text-muted-foreground leading-relaxed">{meaning}</p>
-        </div>
-        <div className="rounded-xl bg-surface/80 ring-1 ring-border/60 p-3">
-          <div className="font-semibold text-foreground mb-1">Suggested Action</div>
-          <p className="text-muted-foreground leading-relaxed">{action}</p>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  return { riskLevel, situation, meaning, action };
 }
 
 export default function SimulationTab() {
@@ -1048,6 +1033,8 @@ export default function SimulationTab() {
   const isFinished = status === 'finished';
   const isFarmer = viewMode === 'farmer';
   const [activePresetLabel, setActivePresetLabel] = useState<string | null>(null);
+  const [scenarioRanks, setScenarioRanks] = useState<ScenarioRank[] | null>(null);
+  const [scenarioStatus, setScenarioStatus] = useState<'idle' | 'running' | 'done'>('idle');
 
   const overviewCard = (
     <Card className={CARD_CLASS}>
@@ -1181,14 +1168,17 @@ export default function SimulationTab() {
     }, {} as Record<WeatherType, number>)
     : null;
 
-  const formatYieldValue = (value: number) =>
-    isFarmer ? `${formatSacks(value)} sacks` : `${value.toFixed(2)} t/ha`;
-  const formatYieldRange = (low: number, high: number) =>
+  const formatYieldValue = useCallback((value: number) => (
+    isFarmer ? `${formatSacks(value)} sacks` : `${value.toFixed(2)} t/ha`
+  ), [isFarmer]);
+  const formatYieldRange = useCallback((low: number, high: number) => (
     isFarmer
       ? `${formatSacks(low)} to ${formatSacks(high)} sacks`
-      : `${low.toFixed(2)} to ${high.toFixed(2)} t/ha`;
-  const yieldTooltipFormatter = (value: number) =>
-    isFarmer ? `${formatSacks(Number(value))} sacks` : `${Number(value).toFixed(2)} t/ha`;
+      : `${low.toFixed(2)} to ${high.toFixed(2)} t/ha`
+  ), [isFarmer]);
+  const yieldTooltipFormatter = useCallback((value: number) => (
+    isFarmer ? `${formatSacks(Number(value))} sacks` : `${Number(value).toFixed(2)} t/ha`
+  ), [isFarmer]);
 
   const confidence = useMemo(() => {
     const n = cycleRecords.length;
@@ -1336,6 +1326,106 @@ export default function SimulationTab() {
     return { tone: 'default' as InsightTone, icon: <Activity className="w-3 h-3" />, text: `Still shifting over the last ${window.length} cycles (${spreadText} spread).` };
   }, [isFarmer, yieldHistoryOverTime]);
 
+  const decisionSupport = useMemo(() => buildDecisionSupport({
+    lowYieldProb,
+    typhoonFrequency,
+    expectedRange: summaryNumbers ? { p5: summaryNumbers.percentile5, p95: summaryNumbers.percentile95 } : null,
+    cycles: cycleRecords.length,
+    irrigationType: params.irrigationType,
+  }), [cycleRecords.length, lowYieldProb, params.irrigationType, summaryNumbers, typhoonFrequency]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setScenarioStatus('running');
+    const cancel = scheduleIdle(() => {
+      const ranks = rankScenarios({
+        months: Array.from({ length: 12 }, (_, index) => index + 1),
+        irrigationTypes: ['Irrigated', 'Rainfed'],
+        ensoStates: ['El Niño', 'Neutral', 'La Niña'],
+        typhoonProbability: params.typhoonProbability,
+        daysPerCycle: params.daysPerCycle,
+        numCycles: SCENARIO_SAMPLE_SIZE,
+      });
+      if (cancelled) return;
+      setScenarioRanks(ranks);
+      setScenarioStatus('done');
+    });
+    return () => {
+      cancelled = true;
+      cancel();
+    };
+  }, [params.daysPerCycle, params.typhoonProbability]);
+
+  const recommendedScenario = scenarioRanks?.[0] ?? null;
+  const currentScenario = useMemo(() => {
+    if (!scenarioRanks) return null;
+    return scenarioRanks.find((scenario) =>
+      scenario.plantingMonth === params.plantingMonth &&
+      scenario.irrigationType === params.irrigationType &&
+      scenario.ensoState === params.ensoState
+    ) ?? null;
+  }, [params.ensoState, params.irrigationType, params.plantingMonth, scenarioRanks]);
+
+  const formatScenarioYield = useCallback((value: number) => (
+    isFarmer ? `${formatSacks(value)} sacks` : `${value.toFixed(2)} t/ha`
+  ), [isFarmer]);
+
+  const formatScenarioDelta = useCallback((value: number) => {
+    const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+    const abs = Math.abs(value);
+    return isFarmer
+      ? `${sign}${formatSacks(abs)} sacks`
+      : `${sign}${abs.toFixed(2)} t/ha`;
+  }, [isFarmer]);
+
+  const decisionToneClass =
+    decisionSupport.tone === 'safe'
+      ? 'bg-primary/10 text-primary'
+      : decisionSupport.tone === 'caution'
+      ? 'bg-warning/15 text-warning'
+      : 'bg-destructive/15 text-destructive';
+
+  const comparisonSummary = useMemo(() => {
+    if (!recommendedScenario || !currentScenario) return null;
+    const isSame =
+      recommendedScenario.plantingMonth === currentScenario.plantingMonth &&
+      recommendedScenario.irrigationType === currentScenario.irrigationType &&
+      recommendedScenario.ensoState === currentScenario.ensoState;
+    if (isSame) {
+      return 'Your current setup is already the top-ranked option under the current typhoon setting.';
+    }
+    const meanGain = recommendedScenario.meanYield - currentScenario.meanYield;
+    const riskDrop = (currentScenario.lowYieldProb - recommendedScenario.lowYieldProb) * 100;
+    return `${MONTH_NAMES[recommendedScenario.plantingMonth - 1]} with ${recommendedScenario.irrigationType.toLowerCase()} and ${recommendedScenario.ensoState} performs better by ${formatScenarioDelta(meanGain)} on average and lowers low-yield risk by ${riskDrop.toFixed(1)} points.`;
+  }, [currentScenario, formatScenarioDelta, recommendedScenario]);
+
+  const decisionBreakdown = useMemo(() => decisionSupport.reasons.map((reason) => {
+    const toneClass =
+      reason.tone === 'safe'
+        ? 'bg-primary/10 text-primary ring-primary/20'
+        : reason.tone === 'caution'
+        ? 'bg-warning/10 text-warning ring-warning/20'
+        : reason.tone === 'risk'
+        ? 'bg-destructive/10 text-destructive ring-destructive/20'
+        : 'bg-muted text-muted-foreground ring-border/60';
+    return { ...reason, toneClass };
+  }), [decisionSupport.reasons]);
+
+  const farmerAdvisory = useMemo(() => buildFarmerAdvisory({
+    meanYield: runningMean,
+    lowYieldProb,
+    currentYield,
+    irrigationType: params.irrigationType,
+    typhoonFrequency,
+    useSacks: true,
+  }), [currentYield, lowYieldProb, params.irrigationType, runningMean, typhoonFrequency]);
+  const farmerToneClass =
+    farmerAdvisory.riskLevel === 'low'
+      ? 'bg-primary/10 text-primary'
+      : farmerAdvisory.riskLevel === 'moderate'
+      ? 'bg-warning/15 text-warning'
+      : 'bg-destructive/15 text-destructive';
+
   const presets = [
     { label: 'Dry Season Rainfed', icon: <Sun className="w-3 h-3" />, params: { plantingMonth: 2, irrigationType: 'Rainfed' as IrrigationType, ensoState: 'Neutral' as ENSOState, typhoonProbability: 5 } },
     { label: 'Wet Season Irrigated', icon: <CloudRain className="w-3 h-3" />, params: { plantingMonth: 7, irrigationType: 'Irrigated' as IrrigationType, ensoState: 'Neutral' as ENSOState, typhoonProbability: 15 } },
@@ -1358,23 +1448,47 @@ export default function SimulationTab() {
       const normalized = cells.map((cell) => (cell == null ? '' : String(cell)));
       return [...normalized, ...empty(width - normalized.length)];
     };
-    const rows: string[][] = [];
+    const formatValueText = (value: number) =>
+      isFarmer ? `${formatSacks(value)} sacks` : `${value.toFixed(2)} t/ha`;
+    const formatRangeText = (low: number, high: number) =>
+      isFarmer
+        ? `${formatSacks(low)} to ${formatSacks(high)} sacks`
+        : `${low.toFixed(2)} to ${high.toFixed(2)} t/ha`;
+    type SectionBlock = { width: number; rows: string[][] };
+    const sections: SectionBlock[] = [];
     const appendSection = (
       title: string,
       interpretationText: string,
+      conclusionText: string,
+      recommendationText: string,
       headers: string[],
       dataRows: (string | number)[][]
     ) => {
-      const width = Math.max(1, headers.length, ...dataRows.map((row) => row.length), interpretationText ? 2 : 1);
-      rows.push([`=== ${title} ===`, ...empty(width - 1)]);
+      const width = Math.max(
+        1,
+        headers.length,
+        ...dataRows.map((row) => row.length),
+        interpretationText ? 2 : 1,
+        conclusionText ? 2 : 1,
+        recommendationText ? 2 : 1
+      );
+      const sectionRows: string[][] = [];
+      sectionRows.push([`=== ${title} ===`, ...empty(width - 1)]);
       if (interpretationText) {
-        rows.push(normalizeRow(['Interpretation', interpretationText], width));
+        sectionRows.push(normalizeRow(['Interpretation', interpretationText], width));
       }
       if (headers.length > 0) {
-        rows.push(normalizeRow(headers, width));
+        sectionRows.push(normalizeRow(headers, width));
       }
-      dataRows.forEach((row) => rows.push(normalizeRow(row, width)));
-      rows.push(empty(width));
+      dataRows.forEach((row) => sectionRows.push(normalizeRow(row, width)));
+      if (conclusionText) {
+        sectionRows.push(normalizeRow(['Conclusion', conclusionText], width));
+      }
+      if (recommendationText) {
+        sectionRows.push(normalizeRow(['Recommendation', recommendationText], width));
+      }
+      sectionRows.push(empty(width));
+      sections.push({ width, rows: sectionRows });
     };
 
     const s = summary;
@@ -1384,19 +1498,160 @@ export default function SimulationTab() {
 
     const totalDays = Object.values(dailyWeatherCounts).reduce((a, b) => a + b, 0) || 1;
     const totalTyphoonDays = dailyTyphoonSeverityCounts.Moderate + dailyTyphoonSeverityCounts.Severe;
-    const cycleInterpretation = 'Each row is one completed crop cycle with final yield and conditions.';
-    const summaryInterpretation = 'Summary statistics across all completed cycles to show average yield and variability.';
-    const weatherInterpretation = weatherInsight.text;
+    const meanValue = s?.mean ?? runningMean;
+    const stdValue = s?.std ?? runningSd;
+    const minValue = s?.min ?? 0;
+    const maxValue = s?.max ?? 0;
+    const p5Value = s?.percentile5 ?? 0;
+    const p95Value = s?.percentile95 ?? 0;
+    const ciWidth = Math.max(0, ciHigh - ciLow);
+    const lowYieldPct = lowYieldProb * 100;
+    const lowThresholdLabel = `${LOW_YIELD_THRESHOLD.toFixed(1)} t/ha (${formatSacks(LOW_YIELD_THRESHOLD)} sacks)`;
+    const dominantWeatherEntry = (Object.entries(dailyWeatherCounts) as [WeatherType, number][])
+      .sort((a, b) => b[1] - a[1])[0];
+    const dominantWeather = dominantWeatherEntry?.[0] ?? 'Normal';
+    const dominantWeatherPct = dominantWeatherEntry ? (dominantWeatherEntry[1] / totalDays) * 100 : 0;
+    const typhoonDayPct = (dailyWeatherCounts.Typhoon / totalDays) * 100;
+    const severeTyphoonPct = totalTyphoonDays > 0
+      ? (dailyTyphoonSeverityCounts.Severe / totalTyphoonDays) * 100
+      : 0;
+    const lowestCycle = cycleRecords.reduce(
+      (lowest, cycle) => (cycle.yieldTons < lowest.yieldTons ? cycle : lowest),
+      cycleRecords[0]
+    );
+    const highestCycle = cycleRecords.reduce(
+      (highest, cycle) => (cycle.yieldTons > highest.yieldTons ? cycle : highest),
+      cycleRecords[0]
+    );
+    const currentVsMean = latestYield != null ? latestYield - meanValue : null;
+    const mostCommonBin = histogramBins.length > 0
+      ? histogramBins.reduce((best, bin) => (bin.count > best.count ? bin : best), histogramBins[0])
+      : null;
+    const mostCommonBinStart = mostCommonBin ? Number(mostCommonBin.label) : 0;
+    const mostCommonBinLabel = mostCommonBin
+      ? `${mostCommonBin.label}-${(mostCommonBinStart + 0.5).toFixed(1)} t/ha`
+      : 'n/a';
+    const riskBand = lowYieldProb >= 0.30 ? 'high' : lowYieldProb >= 0.15 ? 'moderate' : 'low';
+    const variabilityBand = stdValue >= 0.60 ? 'high' : stdValue >= 0.30 ? 'moderate' : 'low';
+
+    const cycleInterpretation =
+      `Each row represents one completed crop cycle with final yield, season, dominant weather, storm severity, irrigation, ENSO, and typhoon probability. ` +
+      `Across ${n} completed cycles, the lowest yield was ${formatValueText(lowestCycle.yieldTons)} in cycle ${lowestCycle.cycleIndex}, while the highest yield was ${formatValueText(highestCycle.yieldTons)} in cycle ${highestCycle.cycleIndex}. ` +
+      `Use these records to trace which combinations of weather and management repeatedly align with weak or strong harvests.`;
+    const cycleConclusion =
+      `The run spans from ${formatValueText(lowestCycle.yieldTons)} to ${formatValueText(highestCycle.yieldTons)}, which confirms that seasonal conditions can move outcomes substantially from one cycle to the next. ` +
+      `The weakest cycle should be treated as the clearest stress-case example for this scenario.`;
+    const cycleRecommendation =
+      `Review cycles at or below ${lowThresholdLabel} first, then compare their planting month, irrigation, ENSO, and storm exposure against the highest-yield cycles to identify which setup changes are most defensible for the next run.`;
+
+    const summaryInterpretation =
+      `This section condenses overall performance into average yield, spread, and uncertainty. The current mean is ${formatValueText(meanValue)}, the likely range is ${formatRangeText(p5Value, p95Value)}, and low-yield risk is ${lowYieldPct.toFixed(1)}% for the threshold ${lowThresholdLabel}. ` +
+      `The 95% confidence interval runs from ${formatValueText(ciLow)} to ${formatValueText(ciHigh)}, a width of ${formatValueText(ciWidth)}, so confidence is currently ${confidence.label.toLowerCase()}.`;
+    const summaryConclusion =
+      riskBand === 'high'
+        ? `Downside exposure is high and variability is ${variabilityBand}, so planning around the mean alone would be too optimistic.`
+        : riskBand === 'moderate'
+        ? `Downside exposure is moderate; use the lower tail, not just the mean, when deciding inputs and targets.`
+        : `Downside exposure is relatively contained, although variability remains ${variabilityBand} and should still be monitored.`;
+    const summaryRecommendation =
+      confidence.label === 'Low'
+        ? 'Run more cycles before locking planning assumptions; the confidence interval is still based on a limited sample.'
+        : confidence.label === 'Medium'
+        ? 'Use the mean for baseline planning, but keep budgets and yield targets anchored closer to P5 until more cycles narrow the interval.'
+        : 'Use the mean as the central planning case and P5 as the contingency case for budgeting, storage, and sales commitments.';
+
+    const weatherInterpretation =
+      `This table counts every simulated day by weather type. ${dominantWeather} was the dominant condition at ${dominantWeatherPct.toFixed(1)}% of all days, while typhoon days accounted for ${typhoonDayPct.toFixed(1)}%. ` +
+      `${weatherStory} The daily mix matters because persistent dry or storm-heavy patterns can drag down the final cycle average even when a few days are favorable.`;
+    const weatherConclusion =
+      dominantWeather === 'Dry' || dominantWeather === 'Typhoon'
+        ? `The run is weather-stressed overall because ${dominantWeather.toLowerCase()} conditions dominated the calendar.`
+        : `The weather mix is comparatively supportive because ${dominantWeather.toLowerCase()} conditions dominated the calendar rather than extreme stress days.`;
+    const weatherRecommendation =
+      dominantWeather === 'Dry'
+        ? 'Prioritize irrigation timing, water retention, and conservative yield targets when the daily mix is dry-heavy.'
+        : dominantWeather === 'Typhoon'
+        ? 'Prioritize drainage, wind protection, and recovery planning when typhoon days consume a meaningful share of the calendar.'
+        : 'Preserve the current scenario assumptions as a baseline, but keep watching whether dry or typhoon shares rise in later runs.';
+
     const typhoonInterpretation = totalTyphoonDays > 0
-      ? `Severe typhoon days are ${dailyTyphoonSeverityCounts.Severe} of ${totalTyphoonDays} typhoon days.`
-      : 'No typhoon days recorded yet.';
-    const yieldSeriesInterpretation = yieldTrendInsight.text;
-    const expectedRangeInterpretation = 'P5-P95 shows the most likely yield range per cycle. Narrower bands mean higher confidence.';
-    const runningMeanInterpretation = meanInsight.text;
-    const histogramInterpretation = distributionInsight.text;
+      ? `Typhoon days made up ${typhoonDayPct.toFixed(1)}% of all simulated days. Within storm days, ${dailyTyphoonSeverityCounts.Severe} of ${totalTyphoonDays} were severe (${severeTyphoonPct.toFixed(1)}%), which helps separate mild disruption from major yield damage. ` +
+        `A higher severe share usually means deeper harvest losses and slower recovery after storm events.`
+      : 'No typhoon days were recorded in the completed cycles, so storm severity did not contribute to yield loss in this run. This makes the current output more reflective of non-storm weather stress than cyclone damage.';
+    const typhoonConclusion = totalTyphoonDays === 0
+      ? 'Storm risk is currently latent rather than observed in the completed data, so the run should not be interpreted as proof of storm resilience.'
+      : severeTyphoonPct >= 50
+      ? 'Storm pressure is materially severe in this run because at least half of typhoon days fall in the severe category.'
+      : 'Storm pressure is present but not dominated by severe events, which suggests moderate disruption is more common than catastrophic loss in this sample.';
+    const typhoonRecommendation = totalTyphoonDays === 0
+      ? 'Keep running additional cycles if you need storm-sensitive conclusions; the present sample is too light on typhoon events to support strong field recommendations.'
+      : severeTyphoonPct >= 50
+      ? 'Plan around severe-event readiness first: drainage, bund integrity, lodging control, and post-storm recovery logistics.'
+      : 'Maintain storm-readiness measures, but focus equally on reducing chronic seasonal stress because moderate storms currently outnumber severe ones.';
+
+    const yieldSeriesInterpretation =
+      `This table lists yield in cycle order so you can see drift, shocks, and recovery over time. ${yieldTrendInsight.text} ` +
+      (latestYield != null
+        ? `The latest completed cycle finished at ${formatValueText(latestYield)}, which is ${currentVsMean != null && currentVsMean >= 0 ? `${formatValueText(Math.abs(currentVsMean))} above` : `${formatValueText(Math.abs(currentVsMean ?? 0))} below`} the current mean.`
+        : '');
+    const yieldSeriesConclusion =
+      currentVsMean == null
+        ? 'The series is available, but no latest-versus-mean comparison could be derived from the current data.'
+        : currentVsMean < 0
+        ? 'Recent performance is running below the average, which is a warning sign if that pattern persists in additional cycles.'
+        : 'Recent performance is at or above the average, which suggests the current scenario is not deteriorating in the latest cycle.';
+    const yieldSeriesRecommendation =
+      currentVsMean != null && currentVsMean < 0
+        ? 'Inspect the most recent below-average cycles for recurring stress signals before assuming the long-run mean will hold.'
+        : 'Continue monitoring cycle-to-cycle movement, but use the full sequence rather than any single strong cycle when setting expectations.';
+
+    const expectedRangeInterpretation =
+      `P5-P95 defines the band where most completed cycles are expected to land. The current range spans ${formatRangeText(p5Value, p95Value)} with a total width of ${formatValueText(Math.max(0, p95Value - p5Value))}. ` +
+      `Narrower bands imply more stable performance, while wider bands imply greater uncertainty around what a single season may produce.`;
+    const expectedRangeConclusion =
+      p95Value - p5Value >= 1
+        ? 'The expected range is wide, so a single-season outcome can deviate materially from the mean.'
+        : p95Value - p5Value >= 0.5
+        ? 'The expected range is moderately wide, which supports cautious planning rather than aggressive yield targets.'
+        : 'The expected range is comparatively tight, which indicates this scenario is behaving more consistently across completed cycles.';
+    const expectedRangeRecommendation =
+      p95Value - p5Value >= 1
+        ? 'Use P5 for worst-case budgeting and avoid committing inputs or sales volumes to the upper tail of the range.'
+        : 'Use the mean for the base plan and keep contingency plans tied to P5 if later cycles widen the band.';
+
+    const runningMeanInterpretation =
+      `This table tracks the cumulative average as more cycles complete. ${meanInsight.text} ` +
+      `The latest running mean is ${formatValueText(latestMean ?? meanValue)}, and its value becomes more useful as the sample size grows.`;
+    const runningMeanConclusion =
+      confidence.label === 'Low'
+        ? 'The running mean is still an early estimate and may move noticeably as more cycles are added.'
+        : confidence.label === 'Medium'
+        ? 'The running mean is becoming usable for planning, but it still needs more cycles before it should be treated as fully settled.'
+        : 'The running mean is mature enough to function as the best single long-run estimate in this scenario.';
+    const runningMeanRecommendation =
+      confidence.label === 'High'
+        ? 'Use the running mean in discussions about typical production, but keep the lower-tail metrics available for risk planning.'
+        : 'Continue the simulation until the running mean changes only marginally across additional cycles before finalizing assumptions.';
+
+    const histogramInterpretation =
+      `This table groups cycle yields into bins to show the most common harvest zone instead of only the average. ${distributionInsight.text} ` +
+      `The densest bin in this run is ${mostCommonBinLabel}, which indicates where results cluster most often.`;
+    const histogramConclusion =
+      mostCommonBinStart < LOW_YIELD_THRESHOLD
+        ? 'The distribution centers below the low-yield threshold, so downside outcomes are not just possible but structurally common in this scenario.'
+        : mostCommonBinStart <= HIGH_YIELD_THRESHOLD
+        ? 'The distribution centers in the middle range, which suggests moderate harvest outcomes are more typical than exceptional ones.'
+        : 'The distribution centers in the higher bins, which suggests stronger harvest outcomes occur more often than weak ones in this scenario.';
+    const histogramRecommendation =
+      mostCommonBinStart < LOW_YIELD_THRESHOLD
+        ? 'Set plans around the low-to-mid bins and treat higher bins as upside rather than the base case.'
+        : 'Anchor storage, labor, and sales plans around the most common bin instead of the maximum observed yield.';
+
     appendSection(
       'Cycle Records',
       cycleInterpretation,
+      cycleConclusion,
+      cycleRecommendation,
       [
         'Cycle',
         'Final Yield (t/ha)',
@@ -1427,13 +1682,6 @@ export default function SimulationTab() {
       ]))
     );
 
-    const meanValue = s?.mean ?? runningMean;
-    const stdValue = s?.std ?? runningSd;
-    const minValue = s?.min ?? 0;
-    const maxValue = s?.max ?? 0;
-    const p5Value = s?.percentile5 ?? 0;
-    const p95Value = s?.percentile95 ?? 0;
-
     const summaryRows: (string | number)[][] = [
       ['Completed Cycles', n, ''],
       ['Mean Yield (t/ha)', meanValue.toFixed(4), formatSacks(meanValue)],
@@ -1455,6 +1703,8 @@ export default function SimulationTab() {
     appendSection(
       'Summary',
       summaryInterpretation,
+      summaryConclusion,
+      summaryRecommendation,
       ['Metric', 'Value (t/ha)', 'Value (sacks)'],
       summaryRows
     );
@@ -1462,6 +1712,8 @@ export default function SimulationTab() {
     appendSection(
       'Daily Weather Counts',
       weatherInterpretation,
+      weatherConclusion,
+      weatherRecommendation,
       ['Weather', 'Days', 'Percent'],
       (Object.keys(dailyWeatherCounts) as WeatherType[]).map((key) => {
         const count = dailyWeatherCounts[key];
@@ -1473,6 +1725,8 @@ export default function SimulationTab() {
     appendSection(
       'Typhoon Severity Counts',
       typhoonInterpretation,
+      typhoonConclusion,
+      typhoonRecommendation,
       ['Severity', 'Days', 'Percent of Typhoon Days'],
       [
         ['Moderate', dailyTyphoonSeverityCounts.Moderate, totalTyphoonDays ? ((dailyTyphoonSeverityCounts.Moderate / totalTyphoonDays) * 100).toFixed(2) : '0.00'],
@@ -1483,6 +1737,8 @@ export default function SimulationTab() {
     appendSection(
       'Yield Over Cycles',
       yieldSeriesInterpretation,
+      yieldSeriesConclusion,
+      yieldSeriesRecommendation,
       ['Cycle', 'Yield (t/ha)', 'Yield (sacks)'],
       yieldSeries.map((p) => ([p.cycle, p.yield.toFixed(4), formatSacks(p.yield)]))
     );
@@ -1490,6 +1746,8 @@ export default function SimulationTab() {
     appendSection(
       'Expected Range (P5-P95)',
       expectedRangeInterpretation,
+      expectedRangeConclusion,
+      expectedRangeRecommendation,
       ['Cycle', 'Mean (t/ha)', 'P5 (t/ha)', 'P95 (t/ha)', 'Mean (sacks)', 'P5 (sacks)', 'P95 (sacks)'],
       yieldBandSeries.map((p) => ([
         p.cycle,
@@ -1505,6 +1763,8 @@ export default function SimulationTab() {
     appendSection(
       'Running Mean',
       runningMeanInterpretation,
+      runningMeanConclusion,
+      runningMeanRecommendation,
       ['Cycle', 'Mean (t/ha)', 'Mean (sacks)'],
       yieldHistoryOverTime.map((value, index) => ([index + 1, value.toFixed(4), formatSacks(value)]))
     );
@@ -1512,6 +1772,8 @@ export default function SimulationTab() {
     appendSection(
       'Yield Distribution',
       histogramInterpretation,
+      histogramConclusion,
+      histogramRecommendation,
       ['Bin Start (t/ha)', 'Bin Range (sacks)', 'Count'],
       histogramBins.map((bin) => {
         const start = Number(bin.label);
@@ -1519,6 +1781,38 @@ export default function SimulationTab() {
         return [bin.label, `${formatSacks(start)}-${formatSacks(end)} sacks`, bin.count];
       })
     );
+
+    const sectionsPerFrame = 3;
+    const sectionGapColumns = 1;
+    const frames: SectionBlock[][] = [];
+    for (let i = 0; i < sections.length; i += sectionsPerFrame) {
+      frames.push(sections.slice(i, i + sectionsPerFrame));
+    }
+
+    const rows: string[][] = [];
+    frames.forEach((frame, frameIndex) => {
+      const maxRows = Math.max(0, ...frame.map((section) => section.rows.length));
+      const frameWidth = frame.reduce(
+        (acc, section, index) => acc + section.width + (index > 0 ? sectionGapColumns : 0),
+        0
+      );
+
+      for (let rowIndex = 0; rowIndex < maxRows; rowIndex++) {
+        const combined: string[] = [];
+        frame.forEach((section, sectionIndex) => {
+          const sectionRow = section.rows[rowIndex] ?? empty(section.width);
+          combined.push(...sectionRow);
+          if (sectionIndex < frame.length - 1) {
+            combined.push(...empty(sectionGapColumns));
+          }
+        });
+        rows.push(combined);
+      }
+
+      if (frameIndex < frames.length - 1) {
+        rows.push(empty(frameWidth));
+      }
+    });
 
     const csvContent = rows
       .map((row) => row.map((cell) => csvEscape(cell)).join(','))
@@ -1535,7 +1829,7 @@ export default function SimulationTab() {
   }, [
     cycleRecords, lowYieldProb, runningMean, runningSd, summary,
     dailyWeatherCounts, dailyTyphoonSeverityCounts, yieldSeries, yieldBandSeries, yieldHistoryOverTime, histogramBins,
-    weatherInsight, yieldTrendInsight, distributionInsight, meanInsight, isFarmer,
+    yieldTrendInsight, distributionInsight, meanInsight, isFarmer, weatherStory, latestYield, latestMean, confidence,
   ]);
 
   const handlePrint = useCallback(() => {
@@ -1588,6 +1882,168 @@ export default function SimulationTab() {
         <WeatherScene weather={currentWeather} growthProgress={dayProgress} />
 
         <MetricGrid items={metricItems} />
+
+        <Card className={`${CARD_CLASS} overflow-hidden`}>
+          <CardContent className="p-0 text-sm" style={{ fontFamily: "'Poppins', sans-serif" }}>
+            <div
+              className="relative overflow-hidden border-b border-border/60 px-5 py-5"
+              style={{
+                backgroundImage:
+                  'radial-gradient(circle at 12% 18%, hsl(var(--primary) / 0.18), transparent 48%), radial-gradient(circle at 88% 12%, hsl(var(--chart-2) / 0.18), transparent 42%), linear-gradient(135deg, hsl(var(--card)) 0%, hsl(var(--surface) / 0.96) 100%)',
+              }}
+            >
+              <div className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-primary/10 blur-2xl" />
+              <div className="relative flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <CardTitle className="text-base text-foreground" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                    Decision Support & Farmer Advisory
+                  </CardTitle>
+                  <div className="text-xs text-muted-foreground">
+                    One panel for the recommendation, the reason behind it, and the next action to take.
+                  </div>
+                </div>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${decisionToneClass}`}>
+                    {decisionSupport.tone === 'safe'
+                      ? <ShieldCheck className="w-3 h-3" />
+                      : decisionSupport.tone === 'caution'
+                      ? <AlertTriangle className="w-3 h-3" />
+                      : <Tornado className="w-3 h-3" />}
+                    {decisionSupport.label}
+                  </span>
+                  {isFarmer && (
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${farmerToneClass}`}>
+                      {farmerAdvisory.riskLevel === 'low'
+                        ? <ShieldCheck className="w-3 h-3" />
+                        : farmerAdvisory.riskLevel === 'moderate'
+                        ? <AlertTriangle className="w-3 h-3" />
+                        : <Tornado className="w-3 h-3" />}
+                      Farmer view
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="relative mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+                <div className="rounded-2xl bg-background/80 backdrop-blur ring-1 ring-border/50 p-4 space-y-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Decision Snapshot
+                  </div>
+                  <div className="text-sm font-semibold text-foreground leading-relaxed">
+                    {comparisonSummary ?? 'Ranking scenarios to compare your current setup with the best option.'}
+                  </div>
+                  <div className="text-xs text-muted-foreground leading-relaxed">
+                    {scenarioStatus === 'done'
+                      ? `Scenario ranking uses ${SCENARIO_SAMPLE_SIZE} simulated cycles per option with the current typhoon setting.`
+                      : 'Ranking planting month, irrigation, and ENSO combinations...'}
+                  </div>
+                </div>
+
+                {isFarmer && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl bg-background/80 backdrop-blur ring-1 ring-border/50 p-4">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Current Situation</div>
+                      <div className="mt-2 text-xs text-muted-foreground leading-relaxed">{farmerAdvisory.situation}</div>
+                    </div>
+                    <div className="rounded-2xl bg-background/80 backdrop-blur ring-1 ring-border/50 p-4">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">What It Means</div>
+                      <div className="mt-2 text-xs text-muted-foreground leading-relaxed">{farmerAdvisory.meaning}</div>
+                    </div>
+                    <div className="rounded-2xl bg-background/80 backdrop-blur ring-1 ring-border/50 p-4">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Best Next Step</div>
+                      <div className="mt-2 text-xs text-muted-foreground leading-relaxed">{farmerAdvisory.action}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="rounded-2xl bg-surface/80 ring-1 ring-border/60 p-4 space-y-3">
+                <div className="font-semibold text-foreground">Current vs Recommended</div>
+                {scenarioStatus !== 'done' && (
+                  <div className="text-muted-foreground">Ranking planting month, irrigation, and ENSO combinations...</div>
+                )}
+                {scenarioStatus === 'done' && currentScenario && recommendedScenario && (
+                  <div className="grid md:grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-background/70 ring-1 ring-border/50 p-4">
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">Current setup</div>
+                      <div className="font-semibold text-foreground mt-1">
+                        {MONTH_NAMES[currentScenario.plantingMonth - 1]} • {currentScenario.irrigationType} • {currentScenario.ensoState}
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                        <div>Average: {formatScenarioYield(currentScenario.meanYield)}</div>
+                        <div>Low-yield risk: {(currentScenario.lowYieldProb * 100).toFixed(1)}%</div>
+                      </div>
+                    </div>
+                    <div className="rounded-xl bg-primary/[0.06] ring-1 ring-primary/20 p-4 shadow-[0_12px_30px_-24px_hsl(var(--primary)/0.7)]">
+                      <div className="text-xs uppercase tracking-wide text-primary/70">Recommended setup</div>
+                      <div className="font-semibold text-foreground mt-1">
+                        {MONTH_NAMES[recommendedScenario.plantingMonth - 1]} • {recommendedScenario.irrigationType} • {recommendedScenario.ensoState}
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                        <div>Average: {formatScenarioYield(recommendedScenario.meanYield)}</div>
+                        <div>Low-yield risk: {(recommendedScenario.lowYieldProb * 100).toFixed(1)}%</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-2xl bg-surface/80 ring-1 ring-border/60 p-4 space-y-3">
+                <div className="font-semibold text-foreground">Why this recommendation</div>
+                <div className="grid md:grid-cols-2 gap-3">
+                  {decisionBreakdown.map((reason) => (
+                    <div key={reason.title} className="rounded-xl bg-background/70 ring-1 ring-border/50 p-4 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold text-foreground">{reason.title}</div>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ${reason.toneClass}`}>
+                          {reason.value}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground leading-relaxed">{reason.text}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] gap-3">
+                <div className="rounded-2xl bg-surface/80 ring-1 ring-border/60 p-4 space-y-3">
+                  <div className="font-semibold text-foreground">Suggested actions</div>
+                  <div className="space-y-2">
+                    {decisionSupport.actions.map((action) => (
+                      <div key={action} className="rounded-lg bg-background/70 ring-1 ring-border/50 px-3 py-2 text-sm text-muted-foreground leading-relaxed">
+                        {action}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-surface/80 ring-1 ring-border/60 p-4 space-y-3">
+                  <div className="font-semibold text-foreground">Alerts</div>
+                  {decisionSupport.alerts.length === 0 && (
+                    <div className="rounded-lg bg-background/70 ring-1 ring-border/50 px-3 py-2 text-sm text-muted-foreground">
+                      No active alerts for the current run.
+                    </div>
+                  )}
+                  {decisionSupport.alerts.map((alert) => (
+                    <div
+                      key={alert.text}
+                      className={`rounded-lg px-3 py-2 text-sm leading-relaxed ${
+                        alert.level === 'high'
+                          ? 'bg-destructive/10 text-destructive ring-1 ring-destructive/20'
+                          : alert.level === 'warning'
+                          ? 'bg-warning/10 text-warning ring-1 ring-warning/20'
+                          : 'bg-muted text-muted-foreground ring-1 ring-border/60'
+                      }`}
+                    >
+                      {alert.text}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <WeatherCalendar
           timeline={calendarWeatherTimeline}
@@ -1809,16 +2265,6 @@ export default function SimulationTab() {
           )}
         </div>
 
-        {isFarmer && (
-          <FarmerInterpretation
-            meanYield={runningMean}
-            lowYieldProb={lowYieldProb}
-            currentYield={currentYield}
-            irrigationType={params.irrigationType}
-            typhoonFrequency={typhoonFrequency}
-            useSacks
-          />
-        )}
       </div>
     </div>
   );
